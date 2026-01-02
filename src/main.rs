@@ -2,6 +2,7 @@
 use clap::Parser;
 
 mod maps;
+mod proc;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -13,6 +14,29 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
+
+    match proc::read_exe_info(args.pid) {
+        Ok(info) => {
+            if let Some(elf) = info.elf {
+                println!(
+                    "exe: {} ({} {:?} {} {})",
+                    info.path.display(),
+                    match elf.class {
+                        proc::ElfClass::Elf32 => "ELF32",
+                        proc::ElfClass::Elf64 => "ELF64",
+                    },
+                    elf.endian,
+                    elf.type_name(),
+                    elf.machine_name()
+                );
+            } else {
+                println!("exe: {} (non-ELF or unreadable)", info.path.display());
+            }
+        }
+        Err(e) => {
+            println!("exe: <unavailable> ({})", e);
+        }
+    }
 
     let entries = match maps::read_proc_maps(args.pid) {
         Ok(v) => v,
