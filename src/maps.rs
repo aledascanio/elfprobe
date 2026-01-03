@@ -156,6 +156,13 @@ impl MappingGroup {
         self.entries.iter().map(|e| e.size()).sum()
     }
 
+    pub fn load_bias_candidate(&self) -> Option<u64> {
+        self.entries
+            .iter()
+            .find(|e| e.offset == 0)
+            .map(|e| e.start)
+    }
+
     pub fn has_offset0(&self) -> bool {
         self.entries.iter().any(|e| e.offset == 0)
     }

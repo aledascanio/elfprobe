@@ -1,6 +1,8 @@
 
 use clap::Parser;
+use std::path::Path;
 
+mod elf64;
 mod maps;
 mod proc;
 
@@ -10,6 +12,10 @@ struct Args {
     /// Process PID
     #[arg(short, long)]
     pid: u32,
+
+    /// Print per-object PLT relocation symbols (noisy)
+    #[arg(long, default_value_t = false)]
+    symbols: bool,
 }
 
 fn main() {
@@ -61,5 +67,33 @@ fn main() {
             likely,
             magic
         );
+
+        if args.symbols && g.kind == maps::PathnameKind::File && g.elf_magic_ok() {
+            let map0 = g.entries.iter().find(|e| e.offset == 0);
+            let load_bias = map0
+                .and_then(|m| {
+                    elf64::compute_load_bias_from_mapping(Path::new(&g.key), m.start, m.offset).ok()
+                })
+                .or_else(|| g.load_bias_candidate());
+
+            let rels = elf64::parse_x86_64_plt_relocations(Path::new(&g.key), load_bias);
+            match rels {
+                Ok(rels) => {
+                    if !rels.is_empty() {
+                        println!("  plt-relocs: {}", rels.len());
+                        for r in rels {
+                            if let Some(addr) = r.got_runtime_addr {
+                                println!("    got=0x{:x} type={} {}", addr, r.r_type, r.sym_name);
+                            } else {
+                                println!("    got=<unknown> type={} {}", r.r_type, r.sym_name);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("  plt-relocs: <unavailable> ({})", e);
+                }
+            }
+        }
     }
 }
