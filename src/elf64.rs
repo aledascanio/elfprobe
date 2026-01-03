@@ -5,10 +5,17 @@ use std::path::Path;
 
 #[derive(Clone, Debug)]
 pub struct PltRelocation {
-    pub sym_name: String,
     pub got_vaddr: u64,
     pub got_runtime_addr: Option<u64>,
     pub r_type: u32,
+    pub kind: PltRelocationKind,
+}
+
+#[derive(Clone, Debug)]
+pub enum PltRelocationKind {
+    JumpSlot { sym_name: String },
+    IRelative { resolver_vaddr: u64, resolver_runtime_addr: Option<u64> },
+    Other { sym_name: Option<String> },
 }
 
 pub fn compute_load_bias_from_mapping(path: &Path, map_start: u64, map_offset: u64) -> io::Result<u64> {
@@ -94,17 +101,45 @@ pub fn parse_x86_64_plt_relocations(path: &Path, load_bias: Option<u64>) -> io::
         let r_type = (rela.r_info & 0xffff_ffff) as u32;
         let sym_index = (rela.r_info >> 32) as u32;
 
-        // x86_64 PLT relocations should be R_X86_64_JUMP_SLOT (7), but allow printing others.
-        let sym = read_sym(&bytes, symtab_off as usize + (sym_index as usize) * 24)?;
-        let sym_name = read_cstr(strtab, sym.st_name as usize)
-            .unwrap_or_else(|| format!("<bad-strtab:{}>", sym.st_name));
-
         let got_runtime_addr = load_bias.map(|b| b.wrapping_add(rela.r_offset));
+
+        // x86_64 relocation types of interest:
+        // - R_X86_64_JUMP_SLOT (7): normal PLT/GOT binding
+        // - R_X86_64_IRELATIVE (37): IFUNC-style resolver; no symbol name
+        let kind = match r_type {
+            7 => {
+                let sym = read_sym(&bytes, symtab_off as usize + (sym_index as usize) * 24)?;
+                let sym_name = read_cstr(strtab, sym.st_name as usize)
+                    .unwrap_or_else(|| format!("<bad-strtab:{}>", sym.st_name));
+                PltRelocationKind::JumpSlot { sym_name }
+            }
+            37 => {
+                let resolver_vaddr = rela._r_addend as u64;
+                let resolver_runtime_addr = load_bias.map(|b| b.wrapping_add(resolver_vaddr));
+                PltRelocationKind::IRelative {
+                    resolver_vaddr,
+                    resolver_runtime_addr,
+                }
+            }
+            _ => {
+                let sym_name = if sym_index == 0 {
+                    None
+                } else {
+                    let sym = read_sym(&bytes, symtab_off as usize + (sym_index as usize) * 24)?;
+                    Some(
+                        read_cstr(strtab, sym.st_name as usize)
+                            .unwrap_or_else(|| format!("<bad-strtab:{}>", sym.st_name)),
+                    )
+                };
+                PltRelocationKind::Other { sym_name }
+            }
+        };
+
         out.push(PltRelocation {
-            sym_name,
             got_vaddr: rela.r_offset,
             got_runtime_addr,
             r_type,
+            kind,
         });
     }
 

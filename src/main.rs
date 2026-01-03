@@ -82,10 +82,33 @@ fn main() {
                     if !rels.is_empty() {
                         println!("  plt-relocs: {}", rels.len());
                         for r in rels {
-                            if let Some(addr) = r.got_runtime_addr {
-                                println!("    got=0x{:x} type={} {}", addr, r.r_type, r.sym_name);
+                            let got_str = if let Some(addr) = r.got_runtime_addr {
+                                format!("0x{:x}", addr)
                             } else {
-                                println!("    got=<unknown> type={} {}", r.r_type, r.sym_name);
+                                "<unknown>".to_string()
+                            };
+
+                            match r.kind {
+                                elf64::PltRelocationKind::JumpSlot { sym_name } => {
+                                    println!("    got={} JUMP_SLOT {}", got_str, sym_name);
+                                }
+                                elf64::PltRelocationKind::IRelative {
+                                    resolver_vaddr: _,
+                                    resolver_runtime_addr,
+                                } => {
+                                    if let Some(res) = resolver_runtime_addr {
+                                        println!("    got={} IRELATIVE resolver=0x{:x}", got_str, res);
+                                    } else {
+                                        println!("    got={} IRELATIVE resolver=<unknown>", got_str);
+                                    }
+                                }
+                                elf64::PltRelocationKind::Other { sym_name } => {
+                                    if let Some(sym) = sym_name {
+                                        println!("    got={} type={} {}", got_str, r.r_type, sym);
+                                    } else {
+                                        println!("    got={} type={}", got_str, r.r_type);
+                                    }
+                                }
                             }
                         }
                     }
