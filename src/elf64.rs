@@ -4,11 +4,39 @@ use std::io;
 use std::path::Path;
 
 #[derive(Clone, Debug)]
+pub struct ElfSymbolTables {
+    pub symtab: Vec<ElfSym>,
+    pub dynsym: Vec<ElfSym>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ElfSym {
+    pub name: String,
+    pub value: u64,
+    pub size: u64,
+    pub st_type: u8,
+}
+
+#[derive(Clone, Debug)]
 pub struct PltRelocation {
     pub got_vaddr: u64,
     pub got_runtime_addr: Option<u64>,
     pub r_type: u32,
     pub kind: PltRelocationKind,
+}
+
+pub fn read_symbol_tables(path: &Path) -> io::Result<ElfSymbolTables> {
+    let bytes = fs::read(path)?;
+    let elf = Elf64File::parse(&bytes)?;
+
+    if elf.e_machine != 62 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("unsupported e_machine {} (x86_64 expected)", elf.e_machine),
+        ));
+    }
+
+    elf.read_symbol_tables(&bytes)
 }
 
 #[derive(Clone, Debug)]
@@ -175,6 +203,11 @@ struct Elf64File {
     phentsize: u16,
     phnum: u16,
     phdrs: Vec<Elf64Phdr>,
+
+    shoff: u64,
+    shentsize: u16,
+    shnum: u16,
+    shstrndx: u16,
 }
 
 #[derive(Clone, Debug)]
@@ -233,6 +266,11 @@ impl Elf64File {
         let phentsize = read_u16(bytes, 0x36)?;
         let phnum = read_u16(bytes, 0x38)?;
 
+        let shoff = read_u64(bytes, 0x28)?;
+        let shentsize = read_u16(bytes, 0x3a)?;
+        let shnum = read_u16(bytes, 0x3c)?;
+        let shstrndx = read_u16(bytes, 0x3e)?;
+
         if phentsize as usize != 56 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -252,6 +290,10 @@ impl Elf64File {
             phentsize,
             phnum,
             phdrs,
+            shoff,
+            shentsize,
+            shnum,
+            shstrndx,
         })
     }
 
@@ -294,6 +336,102 @@ impl Elf64File {
 
         Ok(tags)
     }
+
+    fn read_symbol_tables(&self, bytes: &[u8]) -> io::Result<ElfSymbolTables> {
+        let (symtab, strtab) = self.find_section_pair(bytes, ".symtab", ".strtab")?;
+        let (dynsym, dynstr) = self.find_section_pair(bytes, ".dynsym", ".dynstr")?;
+
+        let symtab_syms = if let (Some(sym), Some(strs)) = (symtab, strtab) {
+            parse_symtab(bytes, &sym, &strs)?
+        } else {
+            Vec::new()
+        };
+
+        let dynsym_syms = if let (Some(sym), Some(strs)) = (dynsym, dynstr) {
+            parse_symtab(bytes, &sym, &strs)?
+        } else {
+            Vec::new()
+        };
+
+        Ok(ElfSymbolTables {
+            symtab: symtab_syms,
+            dynsym: dynsym_syms,
+        })
+    }
+
+    fn find_section_pair(
+        &self,
+        bytes: &[u8],
+        sym_name: &str,
+        str_name: &str,
+    ) -> io::Result<(Option<Elf64Shdr>, Option<Elf64Shdr>)> {
+        if self.shoff == 0 || self.shnum == 0 {
+            return Ok((None, None));
+        }
+        if self.shentsize as usize != 64 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unexpected e_shentsize {}", self.shentsize),
+            ));
+        }
+
+        let shstr = self.read_section_headers(bytes)?;
+        let Some(shstrtab) = shstr.get(self.shstrndx as usize).cloned() else {
+            return Ok((None, None));
+        };
+        let shstr_bytes = slice_section(bytes, &shstrtab)?;
+
+        let mut sym: Option<Elf64Shdr> = None;
+        let mut strs: Option<Elf64Shdr> = None;
+
+        for s in shstr.iter() {
+            let name = read_cstr(shstr_bytes, s.sh_name as usize);
+            let Some(name) = name else {
+                continue;
+            };
+            if name == sym_name {
+                sym = Some(s.clone());
+            } else if name == str_name {
+                strs = Some(s.clone());
+            }
+        }
+
+        Ok((sym, strs))
+    }
+
+    fn read_section_headers(&self, bytes: &[u8]) -> io::Result<Vec<Elf64Shdr>> {
+        let off = self.shoff as usize;
+        let total = (self.shnum as usize)
+            .checked_mul(self.shentsize as usize)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "section header overflow"))?;
+        if off + total > bytes.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "section headers out of range",
+            ));
+        }
+
+        let mut out = Vec::with_capacity(self.shnum as usize);
+        for i in 0..self.shnum as usize {
+            let shoff = off + i * 64;
+            out.push(read_shdr(bytes, shoff)?);
+        }
+        Ok(out)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct Elf64Shdr {
+    sh_name: u32,
+    sh_type: u32,
+    sh_flags: u64,
+    sh_addr: u64,
+    sh_offset: u64,
+    sh_size: u64,
+    sh_link: u32,
+    sh_info: u32,
+    sh_addralign: u64,
+    sh_entsize: u64,
 }
 
 fn read_phdr(bytes: &[u8], off: usize) -> io::Result<Elf64Phdr> {
@@ -305,6 +443,84 @@ fn read_phdr(bytes: &[u8], off: usize) -> io::Result<Elf64Phdr> {
         p_filesz: read_u64_at(bytes, off + 32)?,
         p_memsz: read_u64_at(bytes, off + 40)?,
     })
+}
+
+fn read_shdr(bytes: &[u8], off: usize) -> io::Result<Elf64Shdr> {
+    Ok(Elf64Shdr {
+        sh_name: read_u32_at(bytes, off + 0)?,
+        sh_type: read_u32_at(bytes, off + 4)?,
+        sh_flags: read_u64_at(bytes, off + 8)?,
+        sh_addr: read_u64_at(bytes, off + 16)?,
+        sh_offset: read_u64_at(bytes, off + 24)?,
+        sh_size: read_u64_at(bytes, off + 32)?,
+        sh_link: read_u32_at(bytes, off + 40)?,
+        sh_info: read_u32_at(bytes, off + 44)?,
+        sh_addralign: read_u64_at(bytes, off + 48)?,
+        sh_entsize: read_u64_at(bytes, off + 56)?,
+    })
+}
+
+fn slice_section<'a>(bytes: &'a [u8], sh: &Elf64Shdr) -> io::Result<&'a [u8]> {
+    let off = sh.sh_offset as usize;
+    let sz = sh.sh_size as usize;
+    if off + sz > bytes.len() {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "section out of range"));
+    }
+    Ok(&bytes[off..off + sz])
+}
+
+fn parse_symtab(bytes: &[u8], sym: &Elf64Shdr, strs: &Elf64Shdr) -> io::Result<Vec<ElfSym>> {
+    if sym.sh_entsize != 24 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("unexpected symbol entsize {}", sym.sh_entsize),
+        ));
+    }
+    let sym_bytes = slice_section(bytes, sym)?;
+    let str_bytes = slice_section(bytes, strs)?;
+
+    let count = sym_bytes.len() / 24;
+    let mut out = Vec::with_capacity(count);
+    for i in 0..count {
+        let off = i * 24;
+        let st_name = u32::from_le_bytes([
+            sym_bytes[off],
+            sym_bytes[off + 1],
+            sym_bytes[off + 2],
+            sym_bytes[off + 3],
+        ]);
+        let st_info = sym_bytes[off + 4];
+        let st_type = st_info & 0x0f;
+        let st_value = u64::from_le_bytes([
+            sym_bytes[off + 8],
+            sym_bytes[off + 9],
+            sym_bytes[off + 10],
+            sym_bytes[off + 11],
+            sym_bytes[off + 12],
+            sym_bytes[off + 13],
+            sym_bytes[off + 14],
+            sym_bytes[off + 15],
+        ]);
+        let st_size = u64::from_le_bytes([
+            sym_bytes[off + 16],
+            sym_bytes[off + 17],
+            sym_bytes[off + 18],
+            sym_bytes[off + 19],
+            sym_bytes[off + 20],
+            sym_bytes[off + 21],
+            sym_bytes[off + 22],
+            sym_bytes[off + 23],
+        ]);
+
+        let name = read_cstr(str_bytes, st_name as usize).unwrap_or_else(|| "<noname>".to_string());
+        out.push(ElfSym {
+            name,
+            value: st_value,
+            size: st_size,
+            st_type,
+        });
+    }
+    Ok(out)
 }
 
 fn read_dyn(bytes: &[u8], off: usize) -> io::Result<Elf64Dyn> {

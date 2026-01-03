@@ -5,6 +5,7 @@ use std::path::Path;
 mod elf64;
 mod maps;
 mod proc;
+mod symbolize;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -52,6 +53,12 @@ fn main() {
         }
     };
 
+    let mut symbolizer = if args.symbols {
+        Some(symbolize::Symbolizer::new(entries.clone()))
+    } else {
+        None
+    };
+
     let groups = maps::group_mappings(&entries);
 
     println!("pid {}: {} map entries, {} groups", args.pid, entries.len(), groups.len());
@@ -97,7 +104,17 @@ fn main() {
                                     resolver_runtime_addr,
                                 } => {
                                     if let Some(res) = resolver_runtime_addr {
-                                        println!("    got={} IRELATIVE resolver=0x{:x}", got_str, res);
+                                        let name = symbolizer
+                                            .as_mut()
+                                            .and_then(|s| s.symbolize_runtime_addr(res));
+                                        if let Some(name) = name {
+                                            println!(
+                                                "    got={} IRELATIVE resolver=0x{:x} name={}",
+                                                got_str, res, name
+                                            );
+                                        } else {
+                                            println!("    got={} IRELATIVE resolver=0x{:x}", got_str, res);
+                                        }
                                     } else {
                                         println!("    got={} IRELATIVE resolver=<unknown>", got_str);
                                     }
