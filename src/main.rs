@@ -10,6 +10,7 @@ mod maps;
 mod proc;
 mod rtld;
 mod symbolize;
+mod watch;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -41,6 +42,17 @@ struct Args {
     /// Max symbols to print
     #[arg(long)]
     max_symbols: Option<usize>,
+
+    /// Watch GOT slot changes to observe first-time PLT bindings (requires /proc/<pid>/mem)
+    #[arg(long, default_value_t = false)]
+    watch_bindings: bool,
+
+    #[arg(long, default_value_t = 500)]
+    interval_ms: u64,
+
+    /// Number of polling iterations (omit to run forever)
+    #[arg(long)]
+    iterations: Option<u64>,
 }
 
 fn main() {
@@ -76,6 +88,21 @@ fn main() {
             std::process::exit(1);
         }
     };
+
+    if args.watch_bindings {
+        if let Err(e) = watch::watch_bindings(
+            args.pid,
+            entries.clone(),
+            args.interval_ms,
+            args.iterations,
+            args.filter.clone(),
+            args.elf_only,
+        ) {
+            eprintln!("failed to watch bindings: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
 
     let mut symbolizer = if args.symbols {
         Some(symbolize::Symbolizer::new(entries.clone()))
