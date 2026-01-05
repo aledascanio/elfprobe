@@ -14,12 +14,10 @@ pub struct ElfSym {
     pub name: String,
     pub value: u64,
     pub size: u64,
-    pub st_type: u8,
 }
 
 #[derive(Clone, Debug)]
 pub struct PltRelocation {
-    pub got_vaddr: u64,
     pub got_runtime_addr: Option<u64>,
     pub r_type: u32,
     pub kind: PltRelocationKind,
@@ -77,7 +75,7 @@ pub fn read_plt_ranges(path: &Path) -> io::Result<Vec<(u64, u64)>> {
 #[derive(Clone, Debug)]
 pub enum PltRelocationKind {
     JumpSlot { sym_name: String },
-    IRelative { resolver_vaddr: u64, resolver_runtime_addr: Option<u64> },
+    IRelative { resolver_runtime_addr: Option<u64> },
     Other { sym_name: Option<String> },
 }
 
@@ -179,10 +177,7 @@ pub fn parse_x86_64_plt_relocations(path: &Path, load_bias: Option<u64>) -> io::
             37 => {
                 let resolver_vaddr = rela._r_addend as u64;
                 let resolver_runtime_addr = load_bias.map(|b| b.wrapping_add(resolver_vaddr));
-                PltRelocationKind::IRelative {
-                    resolver_vaddr,
-                    resolver_runtime_addr,
-                }
+                PltRelocationKind::IRelative { resolver_runtime_addr }
             }
             _ => {
                 let sym_name = if sym_index == 0 {
@@ -199,7 +194,6 @@ pub fn parse_x86_64_plt_relocations(path: &Path, load_bias: Option<u64>) -> io::
         };
 
         out.push(PltRelocation {
-            got_vaddr: rela.r_offset,
             got_runtime_addr,
             r_type,
             kind,
@@ -224,8 +218,8 @@ pub const DT_NULL: i64 = 0;
 pub const DT_STRTAB: i64 = 5;
 pub const DT_SYMTAB: i64 = 6;
 pub const DT_RELA: i64 = 7;
-pub const DT_RELASZ: i64 = 8;
-pub const DT_RELAENT: i64 = 9;
+// pub const DT_RELASZ: i64 = 8;
+// pub const DT_RELAENT: i64 = 9;
 pub const DT_SYMENT: i64 = 11;
 pub const DT_JMPREL: i64 = 23;
 pub const DT_PLTRELSZ: i64 = 2;
@@ -234,9 +228,6 @@ pub const DT_PLTREL: i64 = 20;
 #[derive(Clone, Debug)]
 struct Elf64File {
     e_machine: u16,
-    phoff: u64,
-    phentsize: u16,
-    phnum: u16,
     phdrs: Vec<Elf64Phdr>,
 
     shoff: u64,
@@ -248,7 +239,6 @@ struct Elf64File {
 #[derive(Clone, Debug)]
 struct Elf64Phdr {
     p_type: u32,
-    p_flags: u32,
     p_offset: u64,
     p_vaddr: u64,
     p_filesz: u64,
@@ -321,9 +311,6 @@ impl Elf64File {
 
         Ok(Self {
             e_machine,
-            phoff,
-            phentsize,
-            phnum,
             phdrs,
             shoff,
             shentsize,
@@ -458,21 +445,15 @@ impl Elf64File {
 #[derive(Clone, Debug)]
 struct Elf64Shdr {
     sh_name: u32,
-    sh_type: u32,
-    sh_flags: u64,
     sh_addr: u64,
     sh_offset: u64,
     sh_size: u64,
-    sh_link: u32,
-    sh_info: u32,
-    sh_addralign: u64,
     sh_entsize: u64,
 }
 
 fn read_phdr(bytes: &[u8], off: usize) -> io::Result<Elf64Phdr> {
     Ok(Elf64Phdr {
         p_type: read_u32_at(bytes, off + 0)?,
-        p_flags: read_u32_at(bytes, off + 4)?,
         p_offset: read_u64_at(bytes, off + 8)?,
         p_vaddr: read_u64_at(bytes, off + 16)?,
         p_filesz: read_u64_at(bytes, off + 32)?,
@@ -483,14 +464,9 @@ fn read_phdr(bytes: &[u8], off: usize) -> io::Result<Elf64Phdr> {
 fn read_shdr(bytes: &[u8], off: usize) -> io::Result<Elf64Shdr> {
     Ok(Elf64Shdr {
         sh_name: read_u32_at(bytes, off + 0)?,
-        sh_type: read_u32_at(bytes, off + 4)?,
-        sh_flags: read_u64_at(bytes, off + 8)?,
         sh_addr: read_u64_at(bytes, off + 16)?,
         sh_offset: read_u64_at(bytes, off + 24)?,
         sh_size: read_u64_at(bytes, off + 32)?,
-        sh_link: read_u32_at(bytes, off + 40)?,
-        sh_info: read_u32_at(bytes, off + 44)?,
-        sh_addralign: read_u64_at(bytes, off + 48)?,
         sh_entsize: read_u64_at(bytes, off + 56)?,
     })
 }
@@ -525,7 +501,7 @@ fn parse_symtab(bytes: &[u8], sym: &Elf64Shdr, strs: &Elf64Shdr) -> io::Result<V
             sym_bytes[off + 3],
         ]);
         let st_info = sym_bytes[off + 4];
-        let st_type = st_info & 0x0f;
+        let _st_type = st_info & 0x0f;
         let st_value = u64::from_le_bytes([
             sym_bytes[off + 8],
             sym_bytes[off + 9],
@@ -552,7 +528,6 @@ fn parse_symtab(bytes: &[u8], sym: &Elf64Shdr, strs: &Elf64Shdr) -> io::Result<V
             name,
             value: st_value,
             size: st_size,
-            st_type,
         });
     }
     Ok(out)

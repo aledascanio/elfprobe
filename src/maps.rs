@@ -21,13 +21,6 @@ impl MapEntry {
         self.end.saturating_sub(self.start)
     }
 
-    pub fn is_file_backed(&self) -> bool {
-        match self.pathname.as_deref() {
-            Some(p) => !p.starts_with('['),
-            None => false,
-        }
-    }
-
     pub fn pathname_kind(&self) -> PathnameKind {
         match self.pathname.as_deref() {
             None => PathnameKind::Anonymous,
@@ -214,7 +207,7 @@ pub fn group_mappings(entries: &[MapEntry]) -> Vec<MappingGroup> {
 }
 
 fn is_elf_file(path: &Path) -> io::Result<bool> {
-    let mut p: PathBuf = path.into();
+    let p: PathBuf = path.into();
     if p.as_os_str().is_empty() {
         return Ok(false);
     }

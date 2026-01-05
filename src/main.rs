@@ -139,10 +139,7 @@ fn main() {
                                 elf64::PltRelocationKind::JumpSlot { sym_name } => {
                                     println!("    got={} JUMP_SLOT {}", got_str, sym_name);
                                 }
-                                elf64::PltRelocationKind::IRelative {
-                                    resolver_vaddr: _,
-                                    resolver_runtime_addr,
-                                } => {
+                                elf64::PltRelocationKind::IRelative { resolver_runtime_addr } => {
                                     if let Some(res) = resolver_runtime_addr {
                                         let name = symbolizer
                                             .as_mut()
