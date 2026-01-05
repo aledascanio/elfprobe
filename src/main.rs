@@ -3,8 +3,12 @@ use clap::Parser;
 use std::path::Path;
 
 mod elf64;
+mod auxv;
+mod binding;
+mod mem;
 mod maps;
 mod proc;
+mod rtld;
 mod symbolize;
 
 #[derive(Parser, Debug)]
@@ -17,6 +21,26 @@ struct Args {
     /// Print per-object PLT relocation symbols (noisy)
     #[arg(long, default_value_t = false)]
     symbols: bool,
+
+    /// Print rtld link_map
+    #[arg(long, default_value_t = false)]
+    rtld: bool,
+
+    /// Print binding summary
+    #[arg(long, default_value_t = false)]
+    binding: bool,
+
+    /// ELF-only filtering
+    #[arg(long, default_value_t = false)]
+    elf_only: bool,
+
+    /// Filter by pathname
+    #[arg(long)]
+    filter: Option<String>,
+
+    /// Max symbols to print
+    #[arg(long)]
+    max_symbols: Option<usize>,
 }
 
 fn main() {
@@ -63,6 +87,17 @@ fn main() {
 
     println!("pid {}: {} map entries, {} groups", args.pid, entries.len(), groups.len());
     for g in groups {
+        if args.elf_only {
+            if !(g.kind == maps::PathnameKind::File && g.elf_magic_ok()) {
+                continue;
+            }
+        }
+        if let Some(ref needle) = args.filter {
+            if !g.key.contains(needle) {
+                continue;
+            }
+        }
+
         let likely = if g.likely_elf_dso() { " likely-elf" } else { "" };
         let magic = if g.elf_magic_ok() { " elf-magic" } else { "" };
         println!(
@@ -87,8 +122,13 @@ fn main() {
             match rels {
                 Ok(rels) => {
                     if !rels.is_empty() {
-                        println!("  plt-relocs: {}", rels.len());
-                        for r in rels {
+                        let total = rels.len();
+                        println!("  plt-relocs: {}", total);
+                        let max = args.max_symbols.unwrap_or(total);
+                        let mut printed = 0usize;
+
+                        for r in rels.into_iter().take(max) {
+
                             let got_str = if let Some(addr) = r.got_runtime_addr {
                                 format!("0x{:x}", addr)
                             } else {
@@ -127,12 +167,86 @@ fn main() {
                                     }
                                 }
                             }
+
+                            printed += 1;
+                        }
+
+                        if total > printed {
+                            println!("    ... {} more", total - printed);
                         }
                     }
                 }
                 Err(e) => {
                     println!("  plt-relocs: <unavailable> ({})", e);
                 }
+            }
+        }
+    }
+
+    if args.rtld {
+        match rtld::read_link_map(args.pid) {
+            Ok(entries) => {
+                println!("rtld link_map:");
+                for (i, e) in entries.iter().enumerate() {
+                    let name = if e.l_name.is_empty() { "<main>" } else { &e.l_name };
+                    if let Some(ref needle) = args.filter {
+                        if !name.contains(needle) {
+                            continue;
+                        }
+                    }
+                    if args.elf_only {
+                        if let Some(p) = name.strip_prefix("/") {
+                            let _ = p;
+                        }
+                        // Best-effort: only filter if we have a real path.
+                        if !name.starts_with('/') {
+                            continue;
+                        }
+                        let is_elf = std::fs::read(name)
+                            .ok()
+                            .map(|b| b.len() >= 4 && b[0..4] == [0x7f, b'E', b'L', b'F'])
+                            .unwrap_or(false);
+                        if !is_elf {
+                            continue;
+                        }
+                    }
+                    println!("  [{}] base=0x{:x} l_ld=0x{:x} {}", i, e.l_addr, e.l_ld, name);
+                }
+            }
+            Err(e) => {
+                eprintln!("failed to read rtld link_map via /proc/{}/mem: {}", args.pid, e);
+            }
+        }
+    }
+
+    if args.binding {
+        match binding::summarize_bindings(args.pid) {
+            Ok(summaries) => {
+                println!("binding summary:");
+                for s in summaries {
+                    if let Some(ref needle) = args.filter {
+                        if !s.name.contains(needle) {
+                            continue;
+                        }
+                    }
+                    if args.elf_only {
+                        let is_elf = std::fs::read(&s.name)
+                            .ok()
+                            .map(|b| b.len() >= 4 && b[0..4] == [0x7f, b'E', b'L', b'F'])
+                            .unwrap_or(false);
+                        if !is_elf {
+                            continue;
+                        }
+                    }
+
+                    println!(
+                        "  base=0x{:x} jmp_slots={} unresolved={} resolved={} unknown={} {}",
+                        s.base, s.jump_slots, s.unresolved, s.resolved, s.unknown, s.name
+                    );
+                }
+            }
+            Err(e) => {
+                eprintln!("failed to summarize bindings via /proc/{}/mem: {}", args.pid, e);
             }
         }
     }

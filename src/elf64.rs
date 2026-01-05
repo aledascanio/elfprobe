@@ -39,6 +39,41 @@ pub fn read_symbol_tables(path: &Path) -> io::Result<ElfSymbolTables> {
     elf.read_symbol_tables(&bytes)
 }
 
+pub fn read_plt_ranges(path: &Path) -> io::Result<Vec<(u64, u64)>> {
+    let bytes = fs::read(path)?;
+    let elf = Elf64File::parse(&bytes)?;
+
+    if elf.e_machine != 62 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("unsupported e_machine {} (x86_64 expected)", elf.e_machine),
+        ));
+    }
+
+    if elf.shoff == 0 || elf.shnum == 0 {
+        return Ok(Vec::new());
+    }
+
+    let shdrs = elf.read_section_headers(&bytes)?;
+    let Some(shstrtab) = shdrs.get(elf.shstrndx as usize).cloned() else {
+        return Ok(Vec::new());
+    };
+    let shstr_bytes = slice_section(&bytes, &shstrtab)?;
+
+    let mut out = Vec::new();
+    for s in shdrs.iter() {
+        let Some(name) = read_cstr(shstr_bytes, s.sh_name as usize) else {
+            continue;
+        };
+        if name == ".plt" || name == ".plt.sec" || name == ".plt.got" {
+            if s.sh_addr != 0 && s.sh_size != 0 {
+                out.push((s.sh_addr, s.sh_addr.saturating_add(s.sh_size)));
+            }
+        }
+    }
+    Ok(out)
+}
+
 #[derive(Clone, Debug)]
 pub enum PltRelocationKind {
     JumpSlot { sym_name: String },
