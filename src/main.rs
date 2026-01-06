@@ -1,7 +1,7 @@
-
 use clap::Parser;
 use std::path::Path;
 
+mod colors;
 mod elf64;
 mod auxv;
 mod binding;
@@ -18,6 +18,10 @@ struct Args {
     /// Process PID
     #[arg(short, long)]
     pid: u32,
+
+    /// Enable ANSI colors in output
+    #[arg(long, default_value_t = false)]
+    colors: bool,
 
     /// Print per-object PLT relocation symbols (noisy)
     #[arg(long, default_value_t = false)]
@@ -58,12 +62,14 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
+    let theme = colors::Theme::new(args.colors);
+
     match proc::read_exe_info(args.pid) {
         Ok(info) => {
             if let Some(elf) = info.elf {
                 println!(
                     "exe: {} ({} {:?} {} {})",
-                    info.path.display(),
+                    theme.path(&info.path.display().to_string()),
                     match elf.class {
                         proc::ElfClass::Elf32 => "ELF32",
                         proc::ElfClass::Elf64 => "ELF64",
@@ -73,7 +79,10 @@ fn main() {
                     elf.machine_name()
                 );
             } else {
-                println!("exe: {} (non-ELF or unreadable)", info.path.display());
+                println!(
+                    "exe: {} (non-ELF or unreadable)",
+                    theme.path(&info.path.display().to_string())
+                );
             }
         }
         Err(e) => {
@@ -97,6 +106,7 @@ fn main() {
             args.iterations,
             args.filter.clone(),
             args.elf_only,
+            args.colors,
         ) {
             eprintln!("failed to watch bindings: {}", e);
             std::process::exit(1);
@@ -127,10 +137,16 @@ fn main() {
 
         let likely = if g.likely_elf_dso() { " likely-elf" } else { "" };
         let magic = if g.elf_magic_ok() { " elf-magic" } else { "" };
+
+        let key = if g.kind == maps::PathnameKind::File {
+            theme.path(&g.key)
+        } else {
+            g.key.clone()
+        };
         println!(
             "{} {} entries={} size=0x{:x}{}{}",
             g.kind,
-            g.key,
+            key,
             g.entries.len(),
             g.total_size(),
             likely,
@@ -157,14 +173,18 @@ fn main() {
                         for r in rels.into_iter().take(max) {
 
                             let got_str = if let Some(addr) = r.got_runtime_addr {
-                                format!("0x{:x}", addr)
+                                theme.address(addr)
                             } else {
                                 "<unknown>".to_string()
                             };
 
                             match r.kind {
                                 elf64::PltRelocationKind::JumpSlot { sym_name } => {
-                                    println!("    got={} JUMP_SLOT {}", got_str, sym_name);
+                                    println!(
+                                        "    got={} JUMP_SLOT {}",
+                                        got_str,
+                                        theme.symbol(&sym_name)
+                                    );
                                 }
                                 elf64::PltRelocationKind::IRelative { resolver_runtime_addr } => {
                                     if let Some(res) = resolver_runtime_addr {
@@ -173,11 +193,17 @@ fn main() {
                                             .and_then(|s| s.symbolize_runtime_addr(res));
                                         if let Some(name) = name {
                                             println!(
-                                                "    got={} IRELATIVE resolver=0x{:x} name={}",
-                                                got_str, res, name
+                                                "    got={} IRELATIVE resolver={} name={}",
+                                                got_str,
+                                                theme.address(res),
+                                                theme.symbol(&name)
                                             );
                                         } else {
-                                            println!("    got={} IRELATIVE resolver=0x{:x}", got_str, res);
+                                            println!(
+                                                "    got={} IRELATIVE resolver={}",
+                                                got_str,
+                                                theme.address(res)
+                                            );
                                         }
                                     } else {
                                         println!("    got={} IRELATIVE resolver=<unknown>", got_str);
@@ -185,7 +211,12 @@ fn main() {
                                 }
                                 elf64::PltRelocationKind::Other { sym_name } => {
                                     if let Some(sym) = sym_name {
-                                        println!("    got={} type={} {}", got_str, r.r_type, sym);
+                                        println!(
+                                            "    got={} type={} {}",
+                                            got_str,
+                                            r.r_type,
+                                            theme.symbol(&sym)
+                                        );
                                     } else {
                                         println!("    got={} type={}", got_str, r.r_type);
                                     }
@@ -234,7 +265,18 @@ fn main() {
                             continue;
                         }
                     }
-                    println!("  [{}] base=0x{:x} l_ld=0x{:x} {}", i, e.l_addr, e.l_ld, name);
+                    let name_str = if name.starts_with('/') {
+                        theme.path(name)
+                    } else {
+                        name.to_string()
+                    };
+                    println!(
+                        "  [{}] base={} l_ld={} {}",
+                        i,
+                        theme.address(e.l_addr),
+                        theme.address(e.l_ld),
+                        name_str
+                    );
                 }
             }
             Err(e) => {
@@ -264,8 +306,13 @@ fn main() {
                     }
 
                     println!(
-                        "  base=0x{:x} jmp_slots={} unresolved={} resolved={} unknown={} {}",
-                        s.base, s.jump_slots, s.unresolved, s.resolved, s.unknown, s.name
+                        "  base={} jmp_slots={} unresolved={} resolved={} unknown={} {}",
+                        theme.address(s.base),
+                        s.jump_slots,
+                        s.unresolved,
+                        s.resolved,
+                        s.unknown,
+                        theme.path(&s.name)
                     );
                 }
             }

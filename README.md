@@ -72,6 +72,12 @@ Basic mapping overview:
 elfprobe --pid <PID>
 ```
 
+Enable ANSI-colored output:
+
+```bash
+elfprobe --pid <PID> --colors
+```
+
 `--pid` also has a short form:
 
 ```bash

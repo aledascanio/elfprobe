@@ -4,6 +4,7 @@ use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
+use crate::colors;
 use crate::elf64;
 use crate::mem::MemReader;
 use crate::rtld;
@@ -24,9 +25,11 @@ pub fn watch_bindings(
     iterations: Option<u64>,
     filter: Option<String>,
     elf_only: bool,
+    colors: bool,
 ) -> io::Result<()> {
     let mem = MemReader::open(pid)?;
     let mut symbolizer = Symbolizer::new(maps);
+    let theme = colors::Theme::new(colors);
 
     let link_map = rtld::read_link_map(pid)?;
 
@@ -114,14 +117,32 @@ pub fn watch_bindings(
             }
 
             for (obj, items) in by_obj {
-                println!("obj {}:", obj);
+                let obj_str = if obj.starts_with('/') {
+                    theme.path(obj)
+                } else {
+                    obj.to_string()
+                };
+                println!("obj {}:", obj_str);
                 for (idx, old, new) in items {
                     let sym = &slots[idx].sym;
                     let new_name = symbolizer.symbolize_runtime_addr(new);
                     if let Some(nn) = new_name {
-                        println!("  {} got=0x{:x} 0x{:x} -> 0x{:x} ({})", sym, slots[idx].got, old, new, nn);
+                        println!(
+                            "  {} got={} {} -> {} ({})",
+                            theme.symbol(sym),
+                            theme.address(slots[idx].got),
+                            theme.address(old),
+                            theme.address(new),
+                            theme.symbol(&nn)
+                        );
                     } else {
-                        println!("  {} got=0x{:x} 0x{:x} -> 0x{:x}", sym, slots[idx].got, old, new);
+                        println!(
+                            "  {} got={} {} -> {}",
+                            theme.symbol(sym),
+                            theme.address(slots[idx].got),
+                            theme.address(old),
+                            theme.address(new)
+                        );
                     }
                 }
             }
