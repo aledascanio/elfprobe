@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::io;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -175,7 +176,7 @@ impl MappingGroup {
         if self.kind != PathnameKind::File {
             return false;
         }
-        is_elf_file(Path::new(&self.key)).unwrap_or(false)
+        is_elf_magic_file(Path::new(&self.key)).unwrap_or(false)
     }
 }
 
@@ -210,18 +211,23 @@ pub fn group_mappings(entries: &[MapEntry]) -> Vec<MappingGroup> {
         .collect()
 }
 
-fn is_elf_file(path: &Path) -> io::Result<bool> {
+pub fn is_elf_magic_file(path: &Path) -> io::Result<bool> {
     let p: PathBuf = path.into();
     if p.as_os_str().is_empty() {
         return Ok(false);
     }
 
-    let bytes = fs::read(&p);
-    let Ok(bytes) = bytes else {
-        return Ok(false);
+    let mut f = match fs::File::open(&p) {
+        Ok(f) => f,
+        Err(_) => return Ok(false),
     };
 
-    Ok(bytes.len() >= 4 && bytes[0..4] == [0x7f, b'E', b'L', b'F'])
+    let mut magic = [0u8; 4];
+    if f.read_exact(&mut magic).is_err() {
+        return Ok(false);
+    }
+
+    Ok(magic == [0x7f, b'E', b'L', b'F'])
 }
 
 #[cfg(test)]

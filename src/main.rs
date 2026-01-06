@@ -12,6 +12,10 @@ mod rtld;
 mod symbolize;
 mod watch;
 
+fn is_elf_magic_path(path: &str) -> bool {
+    maps::is_elf_magic_file(std::path::Path::new(path)).unwrap_or(false)
+}
+
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
@@ -130,7 +134,10 @@ fn main() {
     );
     for g in groups {
         if args.elf_only {
-            if !(g.kind == maps::PathnameKind::File && g.elf_magic_ok()) {
+            // `elf_magic_ok()` touches the mapped file on disk.
+            // On large processes this can be very expensive if done for every file-backed mapping.
+            // Prefilter using in-memory heuristics so we only probe mappings that look like real DSOs.
+            if !(g.kind == maps::PathnameKind::File && g.likely_elf_dso() && g.elf_magic_ok()) {
                 continue;
             }
         }
@@ -140,12 +147,18 @@ fn main() {
             }
         }
 
-        let likely = if g.likely_elf_dso() {
-            " likely-elf"
+        let likely_elf = g.likely_elf_dso();
+        let likely = if likely_elf { " likely-elf" } else { "" };
+
+        // Checking ELF magic requires touching the file on disk.
+        // On processes with thousands of mapped files (e.g. large desktop apps),
+        // probing every file can be very slow. Restrict this to mappings that
+        // already look like real ELF DSOs.
+        let magic = if g.kind == maps::PathnameKind::File && likely_elf && g.elf_magic_ok() {
+            " elf-magic"
         } else {
             ""
         };
-        let magic = if g.elf_magic_ok() { " elf-magic" } else { "" };
 
         let key = if g.kind == maps::PathnameKind::File {
             theme.path(&g.key)
@@ -162,7 +175,11 @@ fn main() {
             magic
         );
 
-        if args.symbols && g.kind == maps::PathnameKind::File && g.elf_magic_ok() {
+        if args.symbols
+            && g.kind == maps::PathnameKind::File
+            && g.likely_elf_dso()
+            && g.elf_magic_ok()
+        {
             let map0 = g.entries.iter().find(|e| e.offset == 0);
             let load_bias = map0
                 .and_then(|m| {
@@ -274,10 +291,7 @@ fn main() {
                         if !name.starts_with('/') {
                             continue;
                         }
-                        let is_elf = std::fs::read(name)
-                            .ok()
-                            .map(|b| b.len() >= 4 && b[0..4] == [0x7f, b'E', b'L', b'F'])
-                            .unwrap_or(false);
+                        let is_elf = is_elf_magic_path(name);
                         if !is_elf {
                             continue;
                         }
@@ -316,10 +330,7 @@ fn main() {
                         }
                     }
                     if args.elf_only {
-                        let is_elf = std::fs::read(&s.name)
-                            .ok()
-                            .map(|b| b.len() >= 4 && b[0..4] == [0x7f, b'E', b'L', b'F'])
-                            .unwrap_or(false);
+                        let is_elf = is_elf_magic_path(&s.name);
                         if !is_elf {
                             continue;
                         }

@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use crate::colors;
 use crate::elf64;
+use crate::maps;
 use crate::mem::MemReader;
 use crate::rtld;
 use crate::symbolize::Symbolizer;
@@ -54,10 +55,7 @@ pub fn watch_bindings(
             if !path.starts_with('/') {
                 continue;
             }
-            let is_elf = std::fs::read(&path)
-                .ok()
-                .map(|b| b.len() >= 4 && b[0..4] == [0x7f, b'E', b'L', b'F'])
-                .unwrap_or(false);
+            let is_elf = maps::is_elf_magic_file(std::path::Path::new(&path)).unwrap_or(false);
             if !is_elf {
                 continue;
             }
