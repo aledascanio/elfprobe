@@ -33,7 +33,9 @@ impl MapEntry {
     pub fn normalized_pathname(&self) -> Option<String> {
         match self.pathname.as_deref() {
             None => None,
-            Some(p) if p.ends_with(" (deleted)") => Some(p.trim_end_matches(" (deleted)").to_string()),
+            Some(p) if p.ends_with(" (deleted)") => {
+                Some(p.trim_end_matches(" (deleted)").to_string())
+            }
             Some(p) => Some(p.to_string()),
         }
     }
@@ -131,8 +133,10 @@ fn parse_dev(s: &str) -> Result<(u32, u32), String> {
         .split_once(':')
         .ok_or_else(|| format!("invalid dev: {}", s))?;
 
-    let major = u32::from_str_radix(a, 16).map_err(|e| format!("invalid dev major {}: {}", a, e))?;
-    let minor = u32::from_str_radix(b, 16).map_err(|e| format!("invalid dev minor {}: {}", b, e))?;
+    let major =
+        u32::from_str_radix(a, 16).map_err(|e| format!("invalid dev major {}: {}", a, e))?;
+    let minor =
+        u32::from_str_radix(b, 16).map_err(|e| format!("invalid dev minor {}: {}", b, e))?;
 
     Ok((major, minor))
 }
@@ -150,10 +154,7 @@ impl MappingGroup {
     }
 
     pub fn load_bias_candidate(&self) -> Option<u64> {
-        self.entries
-            .iter()
-            .find(|e| e.offset == 0)
-            .map(|e| e.start)
+        self.entries.iter().find(|e| e.offset == 0).map(|e| e.start)
     }
 
     pub fn has_offset0(&self) -> bool {
@@ -185,7 +186,10 @@ pub fn group_mappings(entries: &[MapEntry]) -> Vec<MappingGroup> {
         let kind = e.pathname_kind();
         let key = match kind {
             PathnameKind::Anonymous => "<anonymous>".to_string(),
-            PathnameKind::Special => e.pathname.clone().unwrap_or_else(|| "<special>".to_string()),
+            PathnameKind::Special => e
+                .pathname
+                .clone()
+                .unwrap_or_else(|| "<special>".to_string()),
             PathnameKind::Deleted | PathnameKind::File => e
                 .normalized_pathname()
                 .unwrap_or_else(|| "<unknown>".to_string()),
@@ -235,7 +239,10 @@ mod tests {
         assert_eq!(e.dev_major, 0x08);
         assert_eq!(e.dev_minor, 0x01);
         assert_eq!(e.inode, 262539);
-        assert_eq!(e.pathname.as_deref(), Some("/usr/lib/x86_64-linux-gnu/libdl-2.31.so"));
+        assert_eq!(
+            e.pathname.as_deref(),
+            Some("/usr/lib/x86_64-linux-gnu/libdl-2.31.so")
+        );
         assert_eq!(e.pathname_kind(), PathnameKind::File);
     }
 
@@ -265,7 +272,15 @@ mod tests {
 
         let groups = group_mappings(&entries);
         assert_eq!(groups.len(), 2);
-        assert!(groups.iter().any(|g| g.key == "[heap]" && g.kind == PathnameKind::Special));
-        assert!(groups.iter().any(|g| g.key == "/lib/libc.so.6" && g.entries.len() == 2));
+        assert!(
+            groups
+                .iter()
+                .any(|g| g.key == "[heap]" && g.kind == PathnameKind::Special)
+        );
+        assert!(
+            groups
+                .iter()
+                .any(|g| g.key == "/lib/libc.so.6" && g.entries.len() == 2)
+        );
     }
 }

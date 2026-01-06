@@ -22,7 +22,11 @@ pub fn summarize_bindings(pid: u32) -> io::Result<Vec<BindingSummary>> {
     let mut out = Vec::new();
 
     for e in link_map {
-        let path = if e.l_name.is_empty() { None } else { Some(e.l_name.clone()) };
+        let path = if e.l_name.is_empty() {
+            None
+        } else {
+            Some(e.l_name.clone())
+        };
         let Some(path) = path else {
             // Main executable sometimes has empty l_name; skip for now.
             continue;

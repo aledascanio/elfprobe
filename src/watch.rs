@@ -36,7 +36,11 @@ pub fn watch_bindings(
     let mut slots = Vec::new();
 
     for e in link_map {
-        let path = if e.l_name.is_empty() { None } else { Some(e.l_name) };
+        let path = if e.l_name.is_empty() {
+            None
+        } else {
+            Some(e.l_name)
+        };
         let Some(path) = path else {
             continue;
         };
@@ -81,7 +85,11 @@ pub fn watch_bindings(
         }
     }
 
-    println!("watching {} GOT slots (interval {}ms)", slots.len(), interval_ms);
+    println!(
+        "watching {} GOT slots (interval {}ms)",
+        slots.len(),
+        interval_ms
+    );
 
     let mut it = 0u64;
     loop {

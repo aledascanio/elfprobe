@@ -32,7 +32,8 @@ impl Symbolizer {
         let path_str = path_str.trim_end_matches(" (deleted)");
         let path = PathBuf::from(path_str);
 
-        let load_bias = elf64::compute_load_bias_from_mapping(Path::new(&path), map.start, map.offset).ok()?;
+        let load_bias =
+            elf64::compute_load_bias_from_mapping(Path::new(&path), map.start, map.offset).ok()?;
         let vaddr = runtime_addr.wrapping_sub(load_bias);
 
         let tables = self

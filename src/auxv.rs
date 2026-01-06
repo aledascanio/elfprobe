@@ -44,7 +44,9 @@ pub fn read_auxv(pid: u32) -> io::Result<AuxvInfo> {
 
     Ok(AuxvInfo {
         phdr: phdr.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing AT_PHDR"))?,
-        phent: phent.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing AT_PHENT"))?,
-        phnum: phnum.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing AT_PHNUM"))?,
+        phent: phent
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing AT_PHENT"))?,
+        phnum: phnum
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing AT_PHNUM"))?,
     })
 }

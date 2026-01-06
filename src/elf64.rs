@@ -79,7 +79,11 @@ pub enum PltRelocationKind {
     Other { sym_name: Option<String> },
 }
 
-pub fn compute_load_bias_from_mapping(path: &Path, map_start: u64, map_offset: u64) -> io::Result<u64> {
+pub fn compute_load_bias_from_mapping(
+    path: &Path,
+    map_start: u64,
+    map_offset: u64,
+) -> io::Result<u64> {
     let bytes = fs::read(path)?;
     let elf = Elf64File::parse(&bytes)?;
 
@@ -97,7 +101,10 @@ pub fn compute_load_bias_from_mapping(path: &Path, map_start: u64, map_offset: u
     Ok(map_start.wrapping_sub(seg.p_vaddr))
 }
 
-pub fn parse_x86_64_plt_relocations(path: &Path, load_bias: Option<u64>) -> io::Result<Vec<PltRelocation>> {
+pub fn parse_x86_64_plt_relocations(
+    path: &Path,
+    load_bias: Option<u64>,
+) -> io::Result<Vec<PltRelocation>> {
     let bytes = fs::read(path)?;
     let elf = Elf64File::parse(&bytes)?;
 
@@ -177,7 +184,9 @@ pub fn parse_x86_64_plt_relocations(path: &Path, load_bias: Option<u64>) -> io::
             37 => {
                 let resolver_vaddr = rela._r_addend as u64;
                 let resolver_runtime_addr = load_bias.map(|b| b.wrapping_add(resolver_vaddr));
-                PltRelocationKind::IRelative { resolver_runtime_addr }
+                PltRelocationKind::IRelative {
+                    resolver_runtime_addr,
+                }
             }
             _ => {
                 let sym_name = if sym_index == 0 {
@@ -274,7 +283,10 @@ impl Elf64File {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "file too small"));
         }
         if bytes.get(0..4) != Some(&[0x7f, b'E', b'L', b'F']) {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "missing ELF magic"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "missing ELF magic",
+            ));
         }
         if bytes[EI_CLASS] != ELFCLASS64 {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "not ELF64"));
@@ -341,7 +353,10 @@ impl Elf64File {
         let dyn_off = dyn_ph.p_offset as usize;
         let dyn_sz = dyn_ph.p_filesz as usize;
         if dyn_off + dyn_sz > bytes.len() {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "PT_DYNAMIC out of range"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "PT_DYNAMIC out of range",
+            ));
         }
 
         let mut tags = HashMap::new();
@@ -475,7 +490,10 @@ fn slice_section<'a>(bytes: &'a [u8], sh: &Elf64Shdr) -> io::Result<&'a [u8]> {
     let off = sh.sh_offset as usize;
     let sz = sh.sh_size as usize;
     if off + sz > bytes.len() {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "section out of range"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "section out of range",
+        ));
     }
     Ok(&bytes[off..off + sz])
 }
@@ -557,8 +575,12 @@ fn read_sym(bytes: &[u8], off: usize) -> io::Result<Elf64Sym> {
     }
     Ok(Elf64Sym {
         st_name: read_u32_at(bytes, off + 0)?,
-        _st_info: *bytes.get(off + 4).ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "short SYM"))?,
-        _st_other: *bytes.get(off + 5).ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "short SYM"))?,
+        _st_info: *bytes
+            .get(off + 4)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "short SYM"))?,
+        _st_other: *bytes
+            .get(off + 5)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "short SYM"))?,
         _st_shndx: read_u16_at(bytes, off + 6)?,
         _st_value: read_u64_at(bytes, off + 8)?,
         _st_size: read_u64_at(bytes, off + 16)?,
@@ -570,7 +592,9 @@ fn read_cstr(bytes: &[u8], off: usize) -> Option<String> {
         return None;
     }
     let end = bytes[off..].iter().position(|&b| b == 0).map(|p| off + p)?;
-    std::str::from_utf8(&bytes[off..end]).ok().map(|s| s.to_string())
+    std::str::from_utf8(&bytes[off..end])
+        .ok()
+        .map(|s| s.to_string())
 }
 
 fn read_u16(bytes: &[u8], off: usize) -> io::Result<u16> {

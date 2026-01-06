@@ -1,12 +1,12 @@
 use clap::Parser;
 use std::path::Path;
 
-mod colors;
-mod elf64;
 mod auxv;
 mod binding;
-mod mem;
+mod colors;
+mod elf64;
 mod maps;
+mod mem;
 mod proc;
 mod rtld;
 mod symbolize;
@@ -122,7 +122,12 @@ fn main() {
 
     let groups = maps::group_mappings(&entries);
 
-    println!("pid {}: {} map entries, {} groups", args.pid, entries.len(), groups.len());
+    println!(
+        "pid {}: {} map entries, {} groups",
+        args.pid,
+        entries.len(),
+        groups.len()
+    );
     for g in groups {
         if args.elf_only {
             if !(g.kind == maps::PathnameKind::File && g.elf_magic_ok()) {
@@ -135,7 +140,11 @@ fn main() {
             }
         }
 
-        let likely = if g.likely_elf_dso() { " likely-elf" } else { "" };
+        let likely = if g.likely_elf_dso() {
+            " likely-elf"
+        } else {
+            ""
+        };
         let magic = if g.elf_magic_ok() { " elf-magic" } else { "" };
 
         let key = if g.kind == maps::PathnameKind::File {
@@ -171,7 +180,6 @@ fn main() {
                         let mut printed = 0usize;
 
                         for r in rels.into_iter().take(max) {
-
                             let got_str = if let Some(addr) = r.got_runtime_addr {
                                 theme.address(addr)
                             } else {
@@ -186,7 +194,9 @@ fn main() {
                                         theme.symbol(&sym_name)
                                     );
                                 }
-                                elf64::PltRelocationKind::IRelative { resolver_runtime_addr } => {
+                                elf64::PltRelocationKind::IRelative {
+                                    resolver_runtime_addr,
+                                } => {
                                     if let Some(res) = resolver_runtime_addr {
                                         let name = symbolizer
                                             .as_mut()
@@ -206,7 +216,10 @@ fn main() {
                                             );
                                         }
                                     } else {
-                                        println!("    got={} IRELATIVE resolver=<unknown>", got_str);
+                                        println!(
+                                            "    got={} IRELATIVE resolver=<unknown>",
+                                            got_str
+                                        );
                                     }
                                 }
                                 elf64::PltRelocationKind::Other { sym_name } => {
@@ -243,7 +256,11 @@ fn main() {
             Ok(entries) => {
                 println!("rtld link_map:");
                 for (i, e) in entries.iter().enumerate() {
-                    let name = if e.l_name.is_empty() { "<main>" } else { &e.l_name };
+                    let name = if e.l_name.is_empty() {
+                        "<main>"
+                    } else {
+                        &e.l_name
+                    };
                     if let Some(ref needle) = args.filter {
                         if !name.contains(needle) {
                             continue;
@@ -280,7 +297,10 @@ fn main() {
                 }
             }
             Err(e) => {
-                eprintln!("failed to read rtld link_map via /proc/{}/mem: {}", args.pid, e);
+                eprintln!(
+                    "failed to read rtld link_map via /proc/{}/mem: {}",
+                    args.pid, e
+                );
             }
         }
     }
@@ -317,7 +337,10 @@ fn main() {
                 }
             }
             Err(e) => {
-                eprintln!("failed to summarize bindings via /proc/{}/mem: {}", args.pid, e);
+                eprintln!(
+                    "failed to summarize bindings via /proc/{}/mem: {}",
+                    args.pid, e
+                );
             }
         }
     }

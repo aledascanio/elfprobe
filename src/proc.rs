@@ -65,8 +65,12 @@ fn parse_elf_header(bytes: &[u8]) -> Result<ElfInfo, String> {
     };
 
     let read_u16 = |off: usize| -> Result<u16, String> {
-        let b0 = *bytes.get(off).ok_or_else(|| format!("short read at {off}"))?;
-        let b1 = *bytes.get(off + 1).ok_or_else(|| format!("short read at {}", off + 1))?;
+        let b0 = *bytes
+            .get(off)
+            .ok_or_else(|| format!("short read at {off}"))?;
+        let b1 = *bytes
+            .get(off + 1)
+            .ok_or_else(|| format!("short read at {}", off + 1))?;
         Ok(match endian {
             ElfEndian::Little => u16::from_le_bytes([b0, b1]),
             ElfEndian::Big => u16::from_be_bytes([b0, b1]),

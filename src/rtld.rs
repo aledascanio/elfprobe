@@ -111,7 +111,11 @@ fn traverse_link_map(mem: &MemReader, mut cur: u64) -> io::Result<Vec<LinkMapEnt
 
         let l_name = mem.read_cstring(l_name_ptr, 4096).unwrap_or_default();
 
-        out.push(LinkMapEntry { l_addr, l_ld, l_name });
+        out.push(LinkMapEntry {
+            l_addr,
+            l_ld,
+            l_name,
+        });
         cur = l_next;
     }
 
