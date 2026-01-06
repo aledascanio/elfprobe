@@ -10,7 +10,6 @@ Given a PID, it:
 - (Optionally) summarizes “resolved vs unresolved” PLT/GOT bindings by inspecting GOT slots at runtime (requires `/proc/<pid>/mem`).
 - (Optionally) polls GOT slots to *watch* first-time PLT bindings happen live (requires `/proc/<pid>/mem`).
 
-This is useful when you want to understand *what a process has mapped*, *which DSOs look like ELF objects*, and *what the dynamic linker is doing with PLT/GOT relocations*.
 
 ## Capabilities
 
@@ -60,9 +59,6 @@ Build from source:
 cargo build --release
 ```
 
-The binary will be at:
-
-- `target/release/elfprobe`
 
 ## Usage
 
@@ -163,13 +159,6 @@ elfprobe --help
   - The main executable may appear with an empty name (`<main>`) in `link_map`.
   - Non-path `link_map` entries (e.g. linux-vdso) may be filtered out by `--elf-only`.
 
-## Development
-
-Run tests:
-
-```bash
-cargo test
-```
 
 
 ## License
