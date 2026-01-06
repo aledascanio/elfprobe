@@ -134,6 +134,11 @@ Stop after N iterations:
 elfprobe --pid <PID> --watch-bindings --interval-ms 200 --iterations 100
 ```
 
+Show CLI help:
+
+```bash
+elfprobe --help
+```
 ## Output overview
 
 - The initial `exe:` line prints `/proc/<pid>/exe` plus basic ELF header info when readable.
@@ -166,17 +171,6 @@ Run tests:
 cargo test
 ```
 
-Format:
-
-```bash
-cargo fmt
-```
-
-Show CLI help:
-
-```bash
-elfprobe --help
-```
 
 ## License
 
