@@ -110,6 +110,12 @@ Dump `rtld` `link_map` (requires `/proc/<PID>/mem`):
 elfprobe --pid <PID> --rtld
 ```
 
+Dump `rtld` `link_map` plus `DT_NEEDED` / `DT_RUNPATH` / `DT_SONAME` from each object’s in-memory `PT_DYNAMIC` (implies `--rtld`) (requires `/proc/<PID>/mem`):
+
+```bash
+elfprobe --pid <PID> --rtld-deps
+```
+
 Summarize PLT/GOT binding state (requires `/proc/<PID>/mem`):
 
 ```bash

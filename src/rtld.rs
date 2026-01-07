@@ -9,6 +9,13 @@ const PT_PHDR: u32 = 6;
 const DT_NULL: i64 = 0;
 const DT_DEBUG: i64 = 21;
 
+const DT_NEEDED: i64 = 1;
+const DT_STRTAB: i64 = 5;
+const DT_STRSZ: i64 = 10;
+const DT_SONAME: i64 = 14;
+const DT_RPATH: i64 = 15;
+const DT_RUNPATH: i64 = 29;
+
 #[derive(Clone, Debug)]
 pub struct LinkMapEntry {
     pub l_addr: u64,
@@ -16,10 +23,22 @@ pub struct LinkMapEntry {
     pub l_name: String,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct DynamicDeps {
+    pub soname: Option<String>,
+    pub runpath: Option<String>,
+    pub rpath: Option<String>,
+    pub needed: Vec<String>,
+}
+
 pub fn read_link_map(pid: u32) -> io::Result<Vec<LinkMapEntry>> {
     let aux = auxv::read_auxv(pid)?;
     let mem = MemReader::open(pid)?;
 
+    read_link_map_with_mem(&aux, &mem)
+}
+
+pub fn read_link_map_with_mem(aux: &auxv::AuxvInfo, mem: &MemReader) -> io::Result<Vec<LinkMapEntry>> {
     if aux.phent != 56 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -40,6 +59,66 @@ pub fn read_link_map(pid: u32) -> io::Result<Vec<LinkMapEntry>> {
 
     let r_map = read_r_map_ptr(&mem, r_debug_addr)?;
     traverse_link_map(&mem, r_map)
+}
+
+pub fn read_dynamic_deps(mem: &MemReader, entry: &LinkMapEntry) -> io::Result<DynamicDeps> {
+    if entry.l_ld == 0 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "l_ld is 0"));
+    }
+
+    let mut strtab: Option<u64> = None;
+    let mut strsz: Option<u64> = None;
+    let mut soname_off: Option<u64> = None;
+    let mut runpath_off: Option<u64> = None;
+    let mut rpath_off: Option<u64> = None;
+    let mut needed_offs: Vec<u64> = Vec::new();
+
+    // `l_ld` points to the in-memory PT_DYNAMIC array (Elf64_Dyn entries).
+    for i in 0..4096u64 {
+        let off = entry.l_ld + i * 16;
+        let tag = mem.read_i64(off)?;
+        let val = mem.read_u64(off + 8)?;
+
+        if tag == DT_NULL {
+            break;
+        }
+
+        match tag {
+            DT_STRTAB => strtab = Some(val),
+            DT_STRSZ => strsz = Some(val),
+            DT_SONAME => soname_off = Some(val),
+            DT_RUNPATH => runpath_off = Some(val),
+            DT_RPATH => rpath_off = Some(val),
+            DT_NEEDED => needed_offs.push(val),
+            _ => {}
+        }
+    }
+
+    let strtab = strtab.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing DT_STRTAB"))?;
+    let strsz = strsz.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing DT_STRSZ"))?;
+
+    let mut out = DynamicDeps::default();
+    out.soname = soname_off.and_then(|o| read_dyn_str(mem, strtab, strsz, o).ok());
+    out.runpath = runpath_off.and_then(|o| read_dyn_str(mem, strtab, strsz, o).ok());
+    out.rpath = rpath_off.and_then(|o| read_dyn_str(mem, strtab, strsz, o).ok());
+    for o in needed_offs {
+        if let Ok(s) = read_dyn_str(mem, strtab, strsz, o) {
+            out.needed.push(s);
+        }
+    }
+
+    Ok(out)
+}
+
+fn read_dyn_str(mem: &MemReader, strtab: u64, strsz: u64, off: u64) -> io::Result<String> {
+    if off >= strsz {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("string offset {} out of bounds strsz={}", off, strsz),
+        ));
+    }
+    let max_len = (strsz - off).min(4096) as usize;
+    mem.read_cstring(strtab.wrapping_add(off), max_len)
 }
 
 fn read_phdrs(mem: &MemReader, phdr_addr: u64, phnum: usize) -> io::Result<Vec<Elf64Phdr>> {

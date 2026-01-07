@@ -35,6 +35,10 @@ struct Args {
     #[arg(long, default_value_t = false)]
     rtld: bool,
 
+    /// Print per-object DT_NEEDED/DT_RUNPATH/DT_SONAME from the in-memory PT_DYNAMIC section (implies --rtld)
+    #[arg(long, default_value_t = false)]
+    rtld_deps: bool,
+
     /// Print binding summary
     #[arg(long, default_value_t = false)]
     binding: bool,
@@ -268,25 +272,34 @@ fn main() {
         }
     }
 
-    if args.rtld {
-        match rtld::read_link_map(args.pid) {
+    let rtld_enabled = args.rtld || args.rtld_deps;
+    if rtld_enabled {
+        let aux = match auxv::read_auxv(args.pid) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("failed to read /proc/{}/auxv: {}", args.pid, e);
+                return;
+            }
+        };
+        let mem = match mem::MemReader::open(args.pid) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("failed to open /proc/{}/mem: {}", args.pid, e);
+                return;
+            }
+        };
+
+        match rtld::read_link_map_with_mem(&aux, &mem) {
             Ok(entries) => {
                 println!("rtld link_map:");
                 for (i, e) in entries.iter().enumerate() {
-                    let name = if e.l_name.is_empty() {
-                        "<main>"
-                    } else {
-                        &e.l_name
-                    };
+                    let name = if e.l_name.is_empty() { "<main>" } else { &e.l_name };
                     if let Some(ref needle) = args.filter {
                         if !name.contains(needle) {
                             continue;
                         }
                     }
                     if args.elf_only {
-                        if let Some(p) = name.strip_prefix("/") {
-                            let _ = p;
-                        }
                         // Best-effort: only filter if we have a real path.
                         if !name.starts_with('/') {
                             continue;
@@ -296,6 +309,7 @@ fn main() {
                             continue;
                         }
                     }
+
                     let name_str = if name.starts_with('/') {
                         theme.path(name)
                     } else {
@@ -308,6 +322,31 @@ fn main() {
                         theme.address(e.l_ld),
                         name_str
                     );
+
+                    if args.rtld_deps {
+                        match rtld::read_dynamic_deps(&mem, e) {
+                            Ok(d) => {
+                                if let Some(soname) = d.soname {
+                                    println!("      soname: {}", theme.symbol(&soname));
+                                }
+                                if let Some(runpath) = d.runpath {
+                                    println!("      runpath: {}", runpath);
+                                }
+                                if let Some(rpath) = d.rpath {
+                                    println!("      rpath: {}", rpath);
+                                }
+                                if !d.needed.is_empty() {
+                                    println!("      needed:");
+                                    for n in d.needed {
+                                        println!("        - {}", theme.symbol(&n));
+                                    }
+                                }
+                            }
+                            Err(err) => {
+                                println!("      dynamic: <unavailable> ({})", err);
+                            }
+                        }
+                    }
                 }
             }
             Err(e) => {
