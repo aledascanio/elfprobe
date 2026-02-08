@@ -15,9 +15,8 @@ Given a PID, it:
 
 - **Mapping inspection**
   - Reads `/proc/<pid>/maps` and groups entries by pathname.
-  - Shows mapping group size, number of entries, and heuristics:
-    - `likely-elf`: file mapping has an executable segment and an offset-0 mapping.
-    - `elf-magic`: file on disk starts with `0x7f 'E' 'L' 'F'`.
+  - Shows mapping group size and number of entries.
+  - File mappings that look like loaded ELF DSOs (executable segment, offset-0 mapping, and valid ELF magic on disk) are labeled `elf` instead of `file`.
 
 - **PLT relocation listing (`--symbols`)**
   - For each ELF-looking file mapping, attempts to parse `.rela.plt` / `DT_JMPREL` entries.

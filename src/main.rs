@@ -151,18 +151,10 @@ fn main() {
             }
         }
 
-        let likely_elf = g.likely_elf_dso();
-        let likely = if likely_elf { " likely-elf" } else { "" };
+        let is_elf =
+            g.kind == maps::PathnameKind::File && g.likely_elf_dso() && g.elf_magic_ok();
 
-        // Checking ELF magic requires touching the file on disk.
-        // On processes with thousands of mapped files (e.g. large desktop apps),
-        // probing every file can be very slow. Restrict this to mappings that
-        // already look like real ELF DSOs.
-        let magic = if g.kind == maps::PathnameKind::File && likely_elf && g.elf_magic_ok() {
-            " elf-magic"
-        } else {
-            ""
-        };
+        let kind_label = if is_elf { "elf " } else { &g.kind.to_string() };
 
         let key = if g.kind == maps::PathnameKind::File {
             theme.path(&g.key)
@@ -170,20 +162,14 @@ fn main() {
             g.key.clone()
         };
         println!(
-            "{} {} entries={} size=0x{:x}{}{}",
-            g.kind,
+            "{} {} entries={} size=0x{:x}",
+            kind_label,
             key,
             g.entries.len(),
             g.total_size(),
-            likely,
-            magic
         );
 
-        if args.symbols
-            && g.kind == maps::PathnameKind::File
-            && g.likely_elf_dso()
-            && g.elf_magic_ok()
-        {
+        if args.symbols && is_elf {
             let map0 = g.entries.iter().find(|e| e.offset == 0);
             let load_bias = map0
                 .and_then(|m| {
