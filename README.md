@@ -4,7 +4,7 @@
 
 Given a PID, it:
 
-- Groups and summarizes `/proc/<pid>/maps` mappings.
+- Groups and summarizes `/proc/<pid>/maps` mappings (ELF files only by default).
 - (Optionally) parses ELF x86_64 PLT relocation entries from mapped DSOs and prints their symbols.
 - (Optionally) reads the dynamic loader (`rtld`) `link_map` via `DT_DEBUG` (requires `/proc/<pid>/mem`).
 - (Optionally) summarizes “resolved vs unresolved” PLT/GOT bindings by inspecting GOT slots at runtime (requires `/proc/<pid>/mem`).
@@ -97,10 +97,10 @@ Filter output by pathname substring:
 elfprobe --pid <PID> --filter libc
 ```
 
-Only consider mappings that are actual ELF files on disk:
+Include non-ELF mappings in the output (by default only ELF files are shown):
 
 ```bash
-elfprobe --pid <PID> --elf-only
+elfprobe --pid <PID> --show-non-elf
 ```
 
 Dump `rtld` `link_map` (requires `/proc/<PID>/mem`):
@@ -162,7 +162,7 @@ elfprobe --help
 
 - **Missing / empty entries in `--rtld` output**
   - The main executable may appear with an empty name (`<main>`) in `link_map`.
-  - Non-path `link_map` entries (e.g. linux-vdso) may be filtered out by `--elf-only`.
+  - Non-path `link_map` entries (e.g. linux-vdso) are filtered out by default. Use `--show-non-elf` to include them.
 
 
 

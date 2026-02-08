@@ -25,7 +25,7 @@ pub fn watch_bindings(
     interval_ms: u64,
     iterations: Option<u64>,
     filter: Option<String>,
-    elf_only: bool,
+    show_non_elf: bool,
     colors: bool,
 ) -> io::Result<()> {
     let mem = MemReader::open(pid)?;
@@ -51,7 +51,7 @@ pub fn watch_bindings(
                 continue;
             }
         }
-        if elf_only {
+        if !show_non_elf {
             if !path.starts_with('/') {
                 continue;
             }

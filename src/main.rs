@@ -43,9 +43,9 @@ struct Args {
     #[arg(long, default_value_t = false)]
     binding: bool,
 
-    /// ELF-only filtering
+    /// Include non-ELF mappings in the output
     #[arg(long, default_value_t = false)]
-    elf_only: bool,
+    show_non_elf: bool,
 
     /// Filter by pathname
     #[arg(long)]
@@ -113,7 +113,7 @@ fn main() {
             args.interval_ms,
             args.iterations,
             args.filter.clone(),
-            args.elf_only,
+            args.show_non_elf,
             args.colors,
         ) {
             eprintln!("failed to watch bindings: {}", e);
@@ -137,7 +137,7 @@ fn main() {
         groups.len()
     );
     for g in groups {
-        if args.elf_only {
+        if !args.show_non_elf {
             // `elf_magic_ok()` touches the mapped file on disk.
             // On large processes this can be very expensive if done for every file-backed mapping.
             // Prefilter using in-memory heuristics so we only probe mappings that look like real DSOs.
@@ -285,7 +285,7 @@ fn main() {
                             continue;
                         }
                     }
-                    if args.elf_only {
+                    if !args.show_non_elf {
                         // Best-effort: only filter if we have a real path.
                         if !name.starts_with('/') {
                             continue;
@@ -354,7 +354,7 @@ fn main() {
                             continue;
                         }
                     }
-                    if args.elf_only {
+                    if !args.show_non_elf {
                         let is_elf = is_elf_magic_path(&s.name);
                         if !is_elf {
                             continue;
