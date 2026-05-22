@@ -157,7 +157,14 @@ pub fn parse_x86_64_plt_relocations(
         .vaddr_to_offset(strtab_vaddr)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "DT_STRTAB not in PT_LOAD"))?;
 
-    let strtab = &bytes[strtab_off as usize..];
+    let strtab_off_usize = strtab_off as usize;
+    if strtab_off_usize >= bytes.len() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "DT_STRTAB offset out of file range",
+        ));
+    }
+    let strtab = &bytes[strtab_off_usize..];
 
     let rela_count = (pltrelsz / 24) as usize;
     let mut out = Vec::with_capacity(rela_count);
