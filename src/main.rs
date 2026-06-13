@@ -12,10 +12,6 @@ mod rtld;
 mod symbolize;
 mod watch;
 
-fn is_elf_magic_path(path: &str) -> bool {
-    maps::is_elf_magic_file(std::path::Path::new(path)).unwrap_or(false)
-}
-
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
@@ -280,20 +276,8 @@ fn main() {
                 println!("rtld link_map:");
                 for (i, e) in entries.iter().enumerate() {
                     let name = if e.l_name.is_empty() { "<main>" } else { &e.l_name };
-                    if let Some(ref needle) = args.filter {
-                        if !name.contains(needle) {
-                            continue;
-                        }
-                    }
-                    if !args.show_non_elf {
-                        // Best-effort: only filter if we have a real path.
-                        if !name.starts_with('/') {
-                            continue;
-                        }
-                        let is_elf = is_elf_magic_path(name);
-                        if !is_elf {
-                            continue;
-                        }
+                    if !maps::should_include(name, args.filter.as_deref(), args.show_non_elf) {
+                        continue;
                     }
 
                     let name_str = if name.starts_with('/') {
@@ -349,16 +333,8 @@ fn main() {
             Ok(summaries) => {
                 println!("binding summary:");
                 for s in summaries {
-                    if let Some(ref needle) = args.filter {
-                        if !s.name.contains(needle) {
-                            continue;
-                        }
-                    }
-                    if !args.show_non_elf {
-                        let is_elf = is_elf_magic_path(&s.name);
-                        if !is_elf {
-                            continue;
-                        }
+                    if !maps::should_include(&s.name, args.filter.as_deref(), args.show_non_elf) {
+                        continue;
                     }
 
                     println!(

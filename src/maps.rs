@@ -211,6 +211,27 @@ pub fn group_mappings(entries: &[MapEntry]) -> Vec<MappingGroup> {
         .collect()
 }
 
+/// Decide whether an object identified by `name` (a path or pseudo-name like
+/// `<main>`) should be shown, given the active `--filter` and `--show-non-elf`
+/// flags. When `show_non_elf` is false, only absolute paths to readable ELF
+/// files are kept.
+pub fn should_include(name: &str, filter: Option<&str>, show_non_elf: bool) -> bool {
+    if let Some(needle) = filter {
+        if !name.contains(needle) {
+            return false;
+        }
+    }
+    if !show_non_elf {
+        if !name.starts_with('/') {
+            return false;
+        }
+        if !is_elf_magic_file(Path::new(name)).unwrap_or(false) {
+            return false;
+        }
+    }
+    true
+}
+
 pub fn is_elf_magic_file(path: &Path) -> io::Result<bool> {
     let p: PathBuf = path.into();
     if p.as_os_str().is_empty() {

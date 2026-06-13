@@ -46,19 +46,8 @@ pub fn watch_bindings(
             continue;
         };
 
-        if let Some(ref needle) = filter {
-            if !path.contains(needle) {
-                continue;
-            }
-        }
-        if !show_non_elf {
-            if !path.starts_with('/') {
-                continue;
-            }
-            let is_elf = maps::is_elf_magic_file(std::path::Path::new(&path)).unwrap_or(false);
-            if !is_elf {
-                continue;
-            }
+        if !maps::should_include(&path, filter.as_deref(), show_non_elf) {
+            continue;
         }
 
         let rels = match elf64::parse_x86_64_plt_relocations(Path::new(&path), Some(e.l_addr)) {
