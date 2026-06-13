@@ -161,12 +161,14 @@ fn main() {
         } else {
             g.key.clone()
         };
+        let size = g.total_size();
         println!(
-            "{} {} entries={} size=0x{:x}",
+            "{} {} entries={} size=0x{:x} ({})",
             kind_label,
             key,
             g.entries.len(),
-            g.total_size(),
+            size,
+            maps::human_size(size),
         );
 
         if args.symbols && is_elf {

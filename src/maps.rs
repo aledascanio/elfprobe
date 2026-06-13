@@ -211,6 +211,22 @@ pub fn group_mappings(entries: &[MapEntry]) -> Vec<MappingGroup> {
         .collect()
 }
 
+/// Format a byte count using binary units (B, KiB, MiB, ...). Values under
+/// 1024 are shown as plain bytes; larger values get one decimal place.
+pub fn human_size(bytes: u64) -> String {
+    const UNITS: [&str; 6] = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
+    if bytes < 1024 {
+        return format!("{} B", bytes);
+    }
+    let mut v = bytes as f64;
+    let mut i = 0;
+    while v >= 1024.0 && i < UNITS.len() - 1 {
+        v /= 1024.0;
+        i += 1;
+    }
+    format!("{:.1} {}", v, UNITS[i])
+}
+
 /// Decide whether an object identified by `name` (a path or pseudo-name like
 /// `<main>`) should be shown, given the active `--filter` and `--show-non-elf`
 /// flags. When `show_non_elf` is false, only absolute paths to readable ELF
@@ -287,6 +303,17 @@ mod tests {
         let e = parse_maps_line(line).unwrap();
         assert_eq!(e.pathname_kind(), PathnameKind::Deleted);
         assert_eq!(e.normalized_pathname().as_deref(), Some("/tmp/libfoo.so"));
+    }
+
+    #[test]
+    fn human_size_formats() {
+        assert_eq!(human_size(0), "0 B");
+        assert_eq!(human_size(512), "512 B");
+        assert_eq!(human_size(1024), "1.0 KiB");
+        assert_eq!(human_size(1536), "1.5 KiB");
+        assert_eq!(human_size(0x21000), "132.0 KiB");
+        assert_eq!(human_size(1024 * 1024), "1.0 MiB");
+        assert_eq!(human_size(3 * 1024 * 1024 * 1024), "3.0 GiB");
     }
 
     #[test]
