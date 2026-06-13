@@ -1,5 +1,4 @@
 use clap::Parser;
-use std::path::Path;
 
 mod auxv;
 mod binding;
@@ -166,91 +165,7 @@ fn main() {
         );
 
         if args.symbols && is_elf {
-            let map0 = g.entries.iter().find(|e| e.offset == 0);
-            let load_bias = map0
-                .and_then(|m| {
-                    elf64::compute_load_bias_from_mapping(Path::new(&g.key), m.start, m.offset).ok()
-                })
-                .or_else(|| g.load_bias_candidate());
-
-            let rels = elf64::parse_x86_64_plt_relocations(Path::new(&g.key), load_bias);
-            match rels {
-                Ok(rels) => {
-                    if !rels.is_empty() {
-                        let total = rels.len();
-                        println!("  plt-relocs: {}", total);
-                        let max = args.max_symbols.unwrap_or(total);
-                        let mut printed = 0usize;
-
-                        for r in rels.into_iter().take(max) {
-                            let got_str = if let Some(addr) = r.got_runtime_addr {
-                                theme.address(addr)
-                            } else {
-                                "<unknown>".to_string()
-                            };
-
-                            match r.kind {
-                                elf64::PltRelocationKind::JumpSlot { sym_name } => {
-                                    println!(
-                                        "    got={} JUMP_SLOT {}",
-                                        got_str,
-                                        theme.symbol(&sym_name)
-                                    );
-                                }
-                                elf64::PltRelocationKind::IRelative {
-                                    resolver_runtime_addr,
-                                } => {
-                                    if let Some(res) = resolver_runtime_addr {
-                                        let name = symbolizer
-                                            .as_mut()
-                                            .and_then(|s| s.symbolize_runtime_addr(res));
-                                        if let Some(name) = name {
-                                            println!(
-                                                "    got={} IRELATIVE resolver={} name={}",
-                                                got_str,
-                                                theme.address(res),
-                                                theme.symbol(&name)
-                                            );
-                                        } else {
-                                            println!(
-                                                "    got={} IRELATIVE resolver={}",
-                                                got_str,
-                                                theme.address(res)
-                                            );
-                                        }
-                                    } else {
-                                        println!(
-                                            "    got={} IRELATIVE resolver=<unknown>",
-                                            got_str
-                                        );
-                                    }
-                                }
-                                elf64::PltRelocationKind::Other { sym_name } => {
-                                    if let Some(sym) = sym_name {
-                                        println!(
-                                            "    got={} type={} {}",
-                                            got_str,
-                                            r.r_type,
-                                            theme.symbol(&sym)
-                                        );
-                                    } else {
-                                        println!("    got={} type={}", got_str, r.r_type);
-                                    }
-                                }
-                            }
-
-                            printed += 1;
-                        }
-
-                        if total > printed {
-                            println!("    ... {} more", total - printed);
-                        }
-                    }
-                }
-                Err(e) => {
-                    println!("  plt-relocs: <unavailable> ({})", e);
-                }
-            }
+            print_plt_relocations(&g, args.max_symbols, &theme, symbolizer.as_mut());
         }
     }
 
@@ -355,5 +270,86 @@ fn main() {
                 );
             }
         }
+    }
+}
+
+/// Print the PLT relocation entries for an ELF mapping group (the body of
+/// `--symbols`). `symbolizer` is used to name IRELATIVE resolver targets.
+fn print_plt_relocations(
+    g: &maps::MappingGroup,
+    max_symbols: Option<usize>,
+    theme: &colors::Theme,
+    mut symbolizer: Option<&mut symbolize::Symbolizer>,
+) {
+    use std::path::Path;
+
+    let map0 = g.entries.iter().find(|e| e.offset == 0);
+    let load_bias = map0
+        .and_then(|m| elf64::compute_load_bias_from_mapping(Path::new(&g.key), m.start, m.offset).ok())
+        .or_else(|| g.load_bias_candidate());
+
+    let rels = match elf64::parse_x86_64_plt_relocations(Path::new(&g.key), load_bias) {
+        Ok(rels) => rels,
+        Err(e) => {
+            println!("  plt-relocs: <unavailable> ({})", e);
+            return;
+        }
+    };
+
+    if rels.is_empty() {
+        return;
+    }
+
+    let total = rels.len();
+    println!("  plt-relocs: {}", total);
+    let max = max_symbols.unwrap_or(total);
+    let mut printed = 0usize;
+
+    for r in rels.into_iter().take(max) {
+        let got_str = if let Some(addr) = r.got_runtime_addr {
+            theme.address(addr)
+        } else {
+            "<unknown>".to_string()
+        };
+
+        match r.kind {
+            elf64::PltRelocationKind::JumpSlot { sym_name } => {
+                println!("    got={} JUMP_SLOT {}", got_str, theme.symbol(&sym_name));
+            }
+            elf64::PltRelocationKind::IRelative {
+                resolver_runtime_addr,
+            } => {
+                if let Some(res) = resolver_runtime_addr {
+                    let name = symbolizer
+                        .as_mut()
+                        .and_then(|s| s.symbolize_runtime_addr(res));
+                    if let Some(name) = name {
+                        println!(
+                            "    got={} IRELATIVE resolver={} name={}",
+                            got_str,
+                            theme.address(res),
+                            theme.symbol(&name)
+                        );
+                    } else {
+                        println!("    got={} IRELATIVE resolver={}", got_str, theme.address(res));
+                    }
+                } else {
+                    println!("    got={} IRELATIVE resolver=<unknown>", got_str);
+                }
+            }
+            elf64::PltRelocationKind::Other { sym_name } => {
+                if let Some(sym) = sym_name {
+                    println!("    got={} type={} {}", got_str, r.r_type, theme.symbol(&sym));
+                } else {
+                    println!("    got={} type={}", got_str, r.r_type);
+                }
+            }
+        }
+
+        printed += 1;
+    }
+
+    if total > printed {
+        println!("    ... {} more", total - printed);
     }
 }
