@@ -23,6 +23,11 @@ pub struct PltRelocation {
     pub kind: PltRelocationKind,
 }
 
+/// Returns true if `bytes` starts with the 4-byte ELF magic (`\x7fELF`).
+pub fn is_elf_magic(bytes: &[u8]) -> bool {
+    bytes.get(0..4) == Some(&[0x7f, b'E', b'L', b'F'])
+}
+
 pub fn read_symbol_tables(path: &Path) -> io::Result<ElfSymbolTables> {
     let bytes = fs::read(path)?;
     let elf = Elf64File::parse(&bytes)?;
@@ -271,7 +276,7 @@ impl Elf64File {
         if bytes.len() < 0x40 {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "file too small"));
         }
-        if bytes.get(0..4) != Some(&[0x7f, b'E', b'L', b'F']) {
+        if !is_elf_magic(bytes) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "missing ELF magic",

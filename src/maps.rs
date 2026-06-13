@@ -248,7 +248,7 @@ pub fn is_elf_magic_file(path: &Path) -> io::Result<bool> {
         return Ok(false);
     }
 
-    Ok(magic == [0x7f, b'E', b'L', b'F'])
+    Ok(crate::elf64::is_elf_magic(&magic))
 }
 
 #[cfg(test)]

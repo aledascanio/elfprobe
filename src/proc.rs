@@ -48,7 +48,7 @@ fn parse_elf_header(bytes: &[u8]) -> Result<ElfInfo, String> {
     if bytes.len() < 0x34 {
         return Err("file too small for ELF header".to_string());
     }
-    if bytes.get(0..4) != Some(&[0x7f, b'E', b'L', b'F']) {
+    if !crate::elf64::is_elf_magic(bytes) {
         return Err("missing ELF magic".to_string());
     }
 
