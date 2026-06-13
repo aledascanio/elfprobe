@@ -87,13 +87,14 @@ fn main() {
                 );
             } else {
                 println!(
-                    "exe: {} (non-ELF or unreadable)",
-                    theme.path(&info.path.display().to_string())
+                    "exe: {} {}",
+                    theme.path(&info.path.display().to_string()),
+                    theme.dim("(non-ELF or unreadable)")
                 );
             }
         }
         Err(e) => {
-            println!("exe: <unavailable> ({})", e);
+            println!("exe: {}", theme.dim(&format!("<unavailable> ({})", e)));
         }
     }
 
@@ -235,7 +236,10 @@ fn main() {
                                 }
                             }
                             Err(err) => {
-                                println!("      dynamic: <unavailable> ({})", err);
+                                println!(
+                                    "      dynamic: {}",
+                                    theme.dim(&format!("<unavailable> ({})", err))
+                                );
                             }
                         }
                     }
@@ -298,7 +302,7 @@ fn print_plt_relocations(
     let rels = match elf64::parse_x86_64_plt_relocations(Path::new(&g.key), load_bias) {
         Ok(rels) => rels,
         Err(e) => {
-            println!("  plt-relocs: <unavailable> ({})", e);
+            println!("  plt-relocs: {}", theme.dim(&format!("<unavailable> ({})", e)));
             return;
         }
     };
@@ -316,7 +320,7 @@ fn print_plt_relocations(
         let got_str = if let Some(addr) = r.got_runtime_addr {
             theme.address(addr)
         } else {
-            "<unknown>".to_string()
+            theme.dim("<unknown>")
         };
 
         match r.kind {
@@ -341,7 +345,11 @@ fn print_plt_relocations(
                         println!("    got={} IRELATIVE resolver={}", got_str, theme.address(res));
                     }
                 } else {
-                    println!("    got={} IRELATIVE resolver=<unknown>", got_str);
+                    println!(
+                        "    got={} IRELATIVE resolver={}",
+                        got_str,
+                        theme.dim("<unknown>")
+                    );
                 }
             }
             elf64::PltRelocationKind::Other { sym_name } => {

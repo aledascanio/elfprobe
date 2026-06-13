@@ -32,6 +32,12 @@ impl Theme {
         self.wrap(Color::Yellow, &format!("0x{:x}", addr))
     }
 
+    /// De-emphasized text, used for inline status notes like `<unavailable>`
+    /// and `<unknown>` that are part of the report but not primary data.
+    pub fn dim(&self, s: impl AsRef<str>) -> String {
+        self.wrap(Color::Dim, s.as_ref())
+    }
+
     pub fn wrap<'a>(&self, c: Color, s: &'a str) -> String {
         if !self.enabled {
             return s.to_string();
@@ -45,6 +51,7 @@ pub enum Color {
     Red,
     Yellow,
     Blue,
+    Dim,
     Reset,
 }
 
@@ -54,6 +61,7 @@ impl Color {
             Color::Red => "\x1b[31m",
             Color::Yellow => "\x1b[33m",
             Color::Blue => "\x1b[34m",
+            Color::Dim => "\x1b[2m",
             Color::Reset => "\x1b[0m",
         }
     }
