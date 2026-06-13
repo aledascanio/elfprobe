@@ -26,13 +26,7 @@ pub struct PltRelocation {
 pub fn read_symbol_tables(path: &Path) -> io::Result<ElfSymbolTables> {
     let bytes = fs::read(path)?;
     let elf = Elf64File::parse(&bytes)?;
-
-    if elf.e_machine != 62 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("unsupported e_machine {} (x86_64 expected)", elf.e_machine),
-        ));
-    }
+    elf.ensure_x86_64()?;
 
     elf.read_symbol_tables(&bytes)
 }
@@ -40,13 +34,7 @@ pub fn read_symbol_tables(path: &Path) -> io::Result<ElfSymbolTables> {
 pub fn read_plt_ranges(path: &Path) -> io::Result<Vec<(u64, u64)>> {
     let bytes = fs::read(path)?;
     let elf = Elf64File::parse(&bytes)?;
-
-    if elf.e_machine != 62 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("unsupported e_machine {} (x86_64 expected)", elf.e_machine),
-        ));
-    }
+    elf.ensure_x86_64()?;
 
     if elf.shoff == 0 || elf.shnum == 0 {
         return Ok(Vec::new());
@@ -107,13 +95,7 @@ pub fn parse_x86_64_plt_relocations(
 ) -> io::Result<Vec<PltRelocation>> {
     let bytes = fs::read(path)?;
     let elf = Elf64File::parse(&bytes)?;
-
-    if elf.e_machine != 62 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("unsupported e_machine {} (x86_64 expected)", elf.e_machine),
-        ));
-    }
+    elf.ensure_x86_64()?;
 
     let dyn_tags = elf.read_dynamic_tags(&bytes)?;
 
@@ -336,6 +318,16 @@ impl Elf64File {
             shnum,
             shstrndx,
         })
+    }
+
+    fn ensure_x86_64(&self) -> io::Result<()> {
+        if self.e_machine != 62 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unsupported e_machine {} (x86_64 expected)", self.e_machine),
+            ));
+        }
+        Ok(())
     }
 
     fn vaddr_to_offset(&self, vaddr: u64) -> Option<u64> {
