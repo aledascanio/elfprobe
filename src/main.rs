@@ -18,9 +18,13 @@ struct Args {
     #[arg(short, long)]
     pid: u32,
 
-    /// Enable ANSI colors in output
+    /// Force ANSI colors on (default: auto-detect when stdout is a terminal)
     #[arg(long, default_value_t = false)]
     colors: bool,
+
+    /// Force ANSI colors off (also honors the NO_COLOR env var)
+    #[arg(long, default_value_t = false)]
+    no_color: bool,
 
     /// Print per-object PLT relocation symbols (noisy)
     #[arg(long, default_value_t = false)]
@@ -65,7 +69,7 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
-    let theme = colors::Theme::new(args.colors);
+    let theme = colors::Theme::resolve(args.colors, args.no_color);
 
     match proc::read_exe_info(args.pid) {
         Ok(info) => {
@@ -110,6 +114,7 @@ fn main() {
             args.filter.clone(),
             args.show_non_elf,
             args.colors,
+            args.no_color,
         ) {
             eprintln!("failed to watch bindings: {}", e);
             std::process::exit(1);

@@ -1,9 +1,22 @@
+use std::io::IsTerminal;
+
 pub struct Theme {
     enabled: bool,
 }
 
 impl Theme {
-    pub fn new(enabled: bool) -> Self {
+    /// Decide whether to emit ANSI colors based on flags and environment:
+    /// - `--no-color` (or the `NO_COLOR` env var) always wins and disables color.
+    /// - `--colors` forces color on.
+    /// - otherwise color is enabled only when stdout is a terminal.
+    pub fn resolve(force_on: bool, force_off: bool) -> Self {
+        let enabled = if force_off || std::env::var_os("NO_COLOR").is_some() {
+            false
+        } else if force_on {
+            true
+        } else {
+            std::io::stdout().is_terminal()
+        };
         Self { enabled }
     }
 
