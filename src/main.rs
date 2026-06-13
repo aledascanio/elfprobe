@@ -280,8 +280,8 @@ fn main() {
                         println!(
                             "{}",
                             theme.dim(&format!(
-                                "  {:>14} {:>6} {:>6} {:>6} {:>6}  {}",
-                                "BASE", "SLOTS", "UNRES", "RES", "UNK", "PATH"
+                                "  {:>14} {:>6} {:>6} {:>6} {:>6}  {:<17}  {}",
+                                "BASE", "SLOTS", "UNRES", "RES", "UNK", "RESOLVED", "PATH"
                             ))
                         );
                         header_printed = true;
@@ -292,12 +292,13 @@ fn main() {
                         &format!("{:>14}", format!("0x{:x}", s.base)),
                     );
                     println!(
-                        "  {} {:>6} {:>6} {:>6} {:>6}  {}",
+                        "  {} {:>6} {:>6} {:>6} {:>6}  {}  {}",
                         base,
                         s.jump_slots,
                         s.unresolved,
                         s.resolved,
                         s.unknown,
+                        ratio_bar(s.resolved, s.jump_slots, 10),
                         theme.path(&s.name)
                     );
                 }
@@ -310,6 +311,26 @@ fn main() {
             }
         }
     }
+}
+
+/// Render a fixed-width progress bar of the form `[####------]  80%` showing
+/// `done` out of `total`. The returned string always has the same visible
+/// width for a given `width`, so it can be used as an aligned column.
+fn ratio_bar(done: usize, total: usize, width: usize) -> String {
+    let frac = if total == 0 {
+        0.0
+    } else {
+        (done as f64 / total as f64).clamp(0.0, 1.0)
+    };
+    let filled = (frac * width as f64).round() as usize;
+    let filled = filled.min(width);
+    let pct = (frac * 100.0).round() as u32;
+    format!(
+        "[{}{}] {:>3}%",
+        "#".repeat(filled),
+        "-".repeat(width - filled),
+        pct
+    )
 }
 
 /// Print the PLT relocation entries for an ELF mapping group (the body of
