@@ -271,6 +271,8 @@ fn main() {
             Ok(summaries) => {
                 println!("binding summary:");
                 let mut header_printed = false;
+                let mut objects = 0usize;
+                let (mut t_slots, mut t_unres, mut t_res, mut t_unk) = (0usize, 0usize, 0usize, 0usize);
                 for s in summaries {
                     if !maps::should_include(&s.name, args.filter.as_deref(), args.show_non_elf) {
                         continue;
@@ -287,6 +289,12 @@ fn main() {
                         header_printed = true;
                     }
 
+                    objects += 1;
+                    t_slots += s.jump_slots;
+                    t_unres += s.unresolved;
+                    t_res += s.resolved;
+                    t_unk += s.unknown;
+
                     let base = theme.wrap(
                         colors::Color::Yellow,
                         &format!("{:>14}", format!("0x{:x}", s.base)),
@@ -300,6 +308,22 @@ fn main() {
                         s.unknown,
                         ratio_bar(s.resolved, s.jump_slots, 10),
                         theme.path(&s.name)
+                    );
+                }
+
+                if header_printed {
+                    println!(
+                        "{}",
+                        theme.dim(&format!(
+                            "  {:>14} {:>6} {:>6} {:>6} {:>6}  {}  {} object(s)",
+                            "TOTAL",
+                            t_slots,
+                            t_unres,
+                            t_res,
+                            t_unk,
+                            ratio_bar(t_res, t_slots, 10),
+                            objects
+                        ))
                     );
                 }
             }
