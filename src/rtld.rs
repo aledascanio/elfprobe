@@ -1,6 +1,7 @@
 use std::io;
 
 use crate::auxv;
+use crate::elf64::Elf64Phdr;
 use crate::mem::MemReader;
 
 const PT_DYNAMIC: u32 = 2;
@@ -201,27 +202,12 @@ fn traverse_link_map(mem: &MemReader, mut cur: u64) -> io::Result<Vec<LinkMapEnt
     Ok(out)
 }
 
-#[derive(Clone, Debug)]
-struct Elf64Phdr {
-    p_type: u32,
-    _p_flags: u32,
-    _p_offset: u64,
-    p_vaddr: u64,
-    _p_paddr: u64,
-    _p_filesz: u64,
-    p_memsz: u64,
-    _p_align: u64,
-}
-
 fn read_phdr(mem: &MemReader, addr: u64) -> io::Result<Elf64Phdr> {
     Ok(Elf64Phdr {
         p_type: mem.read_u32(addr + 0)?,
-        _p_flags: mem.read_u32(addr + 4)?,
-        _p_offset: mem.read_u64(addr + 8)?,
+        p_offset: mem.read_u64(addr + 8)?,
         p_vaddr: mem.read_u64(addr + 16)?,
-        _p_paddr: mem.read_u64(addr + 24)?,
-        _p_filesz: mem.read_u64(addr + 32)?,
+        p_filesz: mem.read_u64(addr + 32)?,
         p_memsz: mem.read_u64(addr + 40)?,
-        _p_align: mem.read_u64(addr + 48)?,
     })
 }
