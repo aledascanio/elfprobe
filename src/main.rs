@@ -137,6 +137,7 @@ fn main() {
         entries.len(),
         groups.len()
     );
+    let mut header_printed = false;
     for g in groups {
         if !args.show_non_elf {
             // `elf_magic_ok()` touches the mapped file on disk.
@@ -155,7 +156,18 @@ fn main() {
         let is_elf =
             g.kind == maps::PathnameKind::File && g.likely_elf_dso() && g.elf_magic_ok();
 
-        let kind_label = if is_elf { "elf " } else { &g.kind.to_string() };
+        if !header_printed {
+            println!(
+                "{}",
+                theme.dim(&format!(
+                    "{:<9} {:>4} {:>10} {:>10}  {}",
+                    "KIND", "ENT", "SIZE", "HUMAN", "PATH"
+                ))
+            );
+            header_printed = true;
+        }
+
+        let kind = if is_elf { "elf" } else { &g.kind.to_string() };
 
         let key = if g.kind == maps::PathnameKind::File {
             theme.path(&g.key)
@@ -164,12 +176,12 @@ fn main() {
         };
         let size = g.total_size();
         println!(
-            "{} {} entries={} size=0x{:x} ({})",
-            kind_label,
-            key,
+            "{:<9} {:>4} {:>10} {:>10}  {}",
+            kind,
             g.entries.len(),
-            size,
+            format!("0x{:x}", size),
             maps::human_size(size),
+            key,
         );
 
         if args.symbols && is_elf {
@@ -258,14 +270,30 @@ fn main() {
         match binding::summarize_bindings(args.pid) {
             Ok(summaries) => {
                 println!("binding summary:");
+                let mut header_printed = false;
                 for s in summaries {
                     if !maps::should_include(&s.name, args.filter.as_deref(), args.show_non_elf) {
                         continue;
                     }
 
+                    if !header_printed {
+                        println!(
+                            "{}",
+                            theme.dim(&format!(
+                                "  {:>14} {:>6} {:>6} {:>6} {:>6}  {}",
+                                "BASE", "SLOTS", "UNRES", "RES", "UNK", "PATH"
+                            ))
+                        );
+                        header_printed = true;
+                    }
+
+                    let base = theme.wrap(
+                        colors::Color::Yellow,
+                        &format!("{:>14}", format!("0x{:x}", s.base)),
+                    );
                     println!(
-                        "  base={} jmp_slots={} unresolved={} resolved={} unknown={} {}",
-                        theme.address(s.base),
+                        "  {} {:>6} {:>6} {:>6} {:>6}  {}",
+                        base,
                         s.jump_slots,
                         s.unresolved,
                         s.resolved,
