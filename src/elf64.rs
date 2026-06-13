@@ -287,15 +287,15 @@ impl Elf64File {
             ));
         }
 
-        let e_machine = read_u16(bytes, 0x12)?;
-        let phoff = read_u64(bytes, 0x20)?;
-        let phentsize = read_u16(bytes, 0x36)?;
-        let phnum = read_u16(bytes, 0x38)?;
+        let e_machine = read_u16_at(bytes, 0x12)?;
+        let phoff = read_u64_at(bytes, 0x20)?;
+        let phentsize = read_u16_at(bytes, 0x36)?;
+        let phnum = read_u16_at(bytes, 0x38)?;
 
-        let shoff = read_u64(bytes, 0x28)?;
-        let shentsize = read_u16(bytes, 0x3a)?;
-        let shnum = read_u16(bytes, 0x3c)?;
-        let shstrndx = read_u16(bytes, 0x3e)?;
+        let shoff = read_u64_at(bytes, 0x28)?;
+        let shentsize = read_u16_at(bytes, 0x3a)?;
+        let shnum = read_u16_at(bytes, 0x3c)?;
+        let shstrndx = read_u16_at(bytes, 0x3e)?;
 
         if phentsize as usize != 56 {
             return Err(io::Error::new(
@@ -594,14 +594,6 @@ fn read_cstr(bytes: &[u8], off: usize) -> Option<String> {
     std::str::from_utf8(&bytes[off..end])
         .ok()
         .map(|s| s.to_string())
-}
-
-fn read_u16(bytes: &[u8], off: usize) -> io::Result<u16> {
-    read_u16_at(bytes, off)
-}
-
-fn read_u64(bytes: &[u8], off: usize) -> io::Result<u64> {
-    read_u64_at(bytes, off)
 }
 
 fn read_u16_at(bytes: &[u8], off: usize) -> io::Result<u16> {
