@@ -67,11 +67,14 @@ Basic mapping overview:
 elfprobe --pid <PID>
 ```
 
-Enable ANSI-colored output:
+ANSI colors are enabled automatically when stdout is a terminal. Force them on or off:
 
 ```bash
-elfprobe --pid <PID> --colors
+elfprobe --pid <PID> --colors     # force on
+elfprobe --pid <PID> --no-color   # force off
 ```
+
+The `NO_COLOR` environment variable (any value) also disables colors.
 
 `--pid` also has a short form:
 
@@ -143,13 +146,15 @@ elfprobe --help
 ## Output overview
 
 - The initial `exe:` line prints `/proc/<pid>/exe` plus basic ELF header info when readable.
-- Mapping groups are printed as:
-  - `file /path/to/lib.so entries=N size=0x... likely-elf elf-magic`
+- Mapping groups are printed as an aligned table with a `KIND ENT SIZE HUMAN PATH` header, e.g.:
+  - `elf          5    0x1eb000    1.9 MiB  /usr/lib/x86_64-linux-gnu/libc.so.6`
 - With `--symbols`, per-object PLT relocation entries look like:
   - `got=0x... JUMP_SLOT printf`
   - `got=0x... IRELATIVE resolver=0x... name=...`
-- With `--binding`, the summary is:
-  - `base=0x... jmp_slots=X unresolved=Y resolved=Z unknown=W /path/to/lib.so`
+- With `--binding`, the summary is an aligned table with a `BASE SLOTS UNRES RES UNK RESOLVED PATH` header and a `TOTAL` footer, where `RESOLVED` is a bar showing the resolved fraction of jump slots, e.g.:
+  - `  0x7f...  15  0  15  0  [##########] 100%  /usr/lib/x86_64-linux-gnu/libc.so.6`
+- Sizes are shown both in hex and as human-readable binary units (KiB/MiB/...).
+- Inline status notes such as `<unavailable>` / `<unknown>` are dimmed when colors are enabled.
 
 ## Troubleshooting
 
