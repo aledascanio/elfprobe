@@ -39,18 +39,47 @@ impl MemReader {
             return Ok(String::new());
         }
 
-        let mut out = Vec::new();
-        out.reserve(64);
+        const CHUNK: usize = 256;
+        let mut out = Vec::with_capacity(64);
+        let mut buf = [0u8; CHUNK];
+        let mut read = 0usize;
 
+        while read < max_len {
+            let want = CHUNK.min(max_len - read);
+            let chunk = &mut buf[..want];
+            // A C string may sit near the end of a readable region, so a short
+            // read here is expected; fall back to a byte-wise read for the tail.
+            match self.read_exact(addr + read as u64, chunk) {
+                Ok(()) => {}
+                Err(_) => return self.read_cstring_byte_wise(addr + read as u64, &mut out, max_len - read),
+            }
+            if let Some(nul) = chunk.iter().position(|&b| b == 0) {
+                out.extend_from_slice(&chunk[..nul]);
+                return Ok(String::from_utf8_lossy(&out).to_string());
+            }
+            out.extend_from_slice(chunk);
+            read += want;
+        }
+
+        Ok(String::from_utf8_lossy(&out).to_string())
+    }
+
+    fn read_cstring_byte_wise(
+        &self,
+        addr: u64,
+        out: &mut Vec<u8>,
+        max_len: usize,
+    ) -> io::Result<String> {
         for i in 0..max_len {
             let mut b = [0u8; 1];
-            self.read_exact(addr + i as u64, &mut b)?;
+            if self.read_exact(addr + i as u64, &mut b).is_err() {
+                break;
+            }
             if b[0] == 0 {
                 break;
             }
             out.push(b[0]);
         }
-
-        Ok(String::from_utf8_lossy(&out).to_string())
+        Ok(String::from_utf8_lossy(out).to_string())
     }
 }
