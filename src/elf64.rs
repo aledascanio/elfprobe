@@ -356,12 +356,8 @@ impl Elf64File {
 
         let dyn_off = dyn_ph.p_offset as usize;
         let dyn_sz = dyn_ph.p_filesz as usize;
-        if dyn_off + dyn_sz > bytes.len() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "PT_DYNAMIC out of range",
-            ));
-        }
+        checked_end(dyn_off, dyn_sz, bytes.len())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "PT_DYNAMIC out of range"))?;
 
         let mut tags = HashMap::new();
         let count = dyn_sz / 16;
@@ -445,12 +441,8 @@ impl Elf64File {
         let total = (self.shnum as usize)
             .checked_mul(self.shentsize as usize)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "section header overflow"))?;
-        if off + total > bytes.len() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "section headers out of range",
-            ));
-        }
+        checked_end(off, total, bytes.len())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "section headers out of range"))?;
 
         let mut out = Vec::with_capacity(self.shnum as usize);
         for i in 0..self.shnum as usize {
@@ -493,13 +485,9 @@ fn read_shdr(bytes: &[u8], off: usize) -> io::Result<Elf64Shdr> {
 fn slice_section<'a>(bytes: &'a [u8], sh: &Elf64Shdr) -> io::Result<&'a [u8]> {
     let off = sh.sh_offset as usize;
     let sz = sh.sh_size as usize;
-    if off + sz > bytes.len() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "section out of range",
-        ));
-    }
-    Ok(&bytes[off..off + sz])
+    let end = checked_end(off, sz, bytes.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "section out of range"))?;
+    Ok(&bytes[off..end])
 }
 
 fn parse_symtab(bytes: &[u8], sym: &Elf64Shdr, strs: &Elf64Shdr) -> io::Result<Vec<ElfSym>> {
@@ -563,9 +551,8 @@ fn read_dyn(bytes: &[u8], off: usize) -> io::Result<Elf64Dyn> {
 }
 
 fn read_rela(bytes: &[u8], off: usize) -> io::Result<Elf64Rela> {
-    if off + 24 > bytes.len() {
-        return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "short RELA"));
-    }
+    checked_end(off, 24, bytes.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::UnexpectedEof, "short RELA"))?;
     Ok(Elf64Rela {
         r_offset: read_u64_at(bytes, off + 0)?,
         r_info: read_u64_at(bytes, off + 8)?,
@@ -574,9 +561,8 @@ fn read_rela(bytes: &[u8], off: usize) -> io::Result<Elf64Rela> {
 }
 
 fn read_sym(bytes: &[u8], off: usize) -> io::Result<Elf64Sym> {
-    if off + 24 > bytes.len() {
-        return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "short SYM"));
-    }
+    checked_end(off, 24, bytes.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::UnexpectedEof, "short SYM"))?;
     Ok(Elf64Sym {
         st_name: read_u32_at(bytes, off + 0)?,
         _st_info: *bytes
@@ -601,17 +587,27 @@ fn read_cstr(bytes: &[u8], off: usize) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-fn read_u16_at(bytes: &[u8], off: usize) -> io::Result<u16> {
-    if off + 2 > bytes.len() {
+/// Compute `off + n` and verify the resulting range `[off, off + n)` lies
+/// within `len`, using checked arithmetic so a malformed `off` near
+/// `usize::MAX` cannot wrap past the bounds check and cause an out-of-bounds
+/// index panic. Returns the exclusive end offset on success.
+fn checked_end(off: usize, n: usize, len: usize) -> io::Result<usize> {
+    let end = off
+        .checked_add(n)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "offset overflow"))?;
+    if end > len {
         return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "short read"));
     }
+    Ok(end)
+}
+
+fn read_u16_at(bytes: &[u8], off: usize) -> io::Result<u16> {
+    checked_end(off, 2, bytes.len())?;
     Ok(u16::from_le_bytes([bytes[off], bytes[off + 1]]))
 }
 
 fn read_u32_at(bytes: &[u8], off: usize) -> io::Result<u32> {
-    if off + 4 > bytes.len() {
-        return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "short read"));
-    }
+    checked_end(off, 4, bytes.len())?;
     Ok(u32::from_le_bytes([
         bytes[off],
         bytes[off + 1],
@@ -621,9 +617,7 @@ fn read_u32_at(bytes: &[u8], off: usize) -> io::Result<u32> {
 }
 
 fn read_u64_at(bytes: &[u8], off: usize) -> io::Result<u64> {
-    if off + 8 > bytes.len() {
-        return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "short read"));
-    }
+    checked_end(off, 8, bytes.len())?;
     Ok(u64::from_le_bytes([
         bytes[off],
         bytes[off + 1],
