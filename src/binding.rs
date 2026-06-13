@@ -22,14 +22,15 @@ pub fn summarize_bindings(pid: u32) -> io::Result<Vec<BindingSummary>> {
     let mut out = Vec::new();
 
     for e in link_map {
+        // The main executable usually has an empty l_name in link_map; fall
+        // back to /proc/<pid>/exe so its PLT bindings are summarized too.
         let path = if e.l_name.is_empty() {
-            None
+            match crate::proc::read_proc_exe(pid) {
+                Ok(p) => p.to_string_lossy().into_owned(),
+                Err(_) => continue,
+            }
         } else {
-            Some(e.l_name.clone())
-        };
-        let Some(path) = path else {
-            // Main executable sometimes has empty l_name; skip for now.
-            continue;
+            e.l_name.clone()
         };
 
         let plt_ranges = elf64::read_plt_ranges(Path::new(&path)).unwrap_or_default();
