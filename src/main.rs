@@ -19,11 +19,11 @@ struct Args {
     pid: u32,
 
     /// Force ANSI colors on (default: auto-detect when stdout is a terminal)
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = false, conflicts_with = "no_color")]
     colors: bool,
 
     /// Force ANSI colors off (also honors the NO_COLOR env var)
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = false, conflicts_with = "colors")]
     no_color: bool,
 
     /// Print per-object PLT relocation symbols (noisy)
