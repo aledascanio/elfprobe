@@ -3,6 +3,7 @@ use clap::Parser;
 mod auxv;
 mod binding;
 mod colors;
+mod demangle;
 mod elf64;
 mod maps;
 mod mem;
@@ -399,6 +400,9 @@ fn print_plt_relocations(
         match r.kind {
             elf64::PltRelocationKind::JumpSlot { sym_name } => {
                 println!("    got={} JUMP_SLOT {}", got_str, theme.symbol(&sym_name));
+            }
+            elf64::PltRelocationKind::GlobDat { sym_name } => {
+                println!("    got={} GLOB_DAT  {}", got_str, theme.symbol(&sym_name));
             }
             elf64::PltRelocationKind::IRelative {
                 resolver_runtime_addr,

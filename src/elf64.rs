@@ -3,6 +3,8 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+use crate::demangle;
+
 #[derive(Clone, Debug)]
 pub struct ElfSymbolTables {
     pub symtab: Vec<ElfSym>,
@@ -68,6 +70,11 @@ pub fn read_plt_ranges(path: &Path) -> io::Result<Vec<(u64, u64)>> {
 #[derive(Clone, Debug)]
 pub enum PltRelocationKind {
     JumpSlot { sym_name: String },
+    /// `R_X86_64_GLOB_DAT` (type 6): a GOT slot filled at load time with the
+    /// address of an imported symbol. Rust uses these for cross-dylib function
+    /// imports instead of `JUMP_SLOT`, so without parsing `DT_RELA` the
+    /// mangled Rust imports are invisible to `--symbols`.
+    GlobDat { sym_name: String },
     IRelative { resolver_runtime_addr: Option<u64> },
     Other { sym_name: Option<String> },
 }
@@ -104,21 +111,6 @@ pub fn parse_x86_64_plt_relocations(
 
     let dyn_tags = elf.read_dynamic_tags(&bytes)?;
 
-    let Some(jmprel_vaddr) = dyn_tags.get(&DT_JMPREL).copied() else {
-        return Ok(Vec::new());
-    };
-    let Some(pltrelsz) = dyn_tags.get(&DT_PLTRELSZ).copied() else {
-        return Ok(Vec::new());
-    };
-
-    let pltrel = dyn_tags.get(&DT_PLTREL).copied().unwrap_or(0);
-    if pltrel != DT_RELA as u64 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("unsupported DT_PLTREL {} (DT_RELA expected)", pltrel),
-        ));
-    }
-
     let symtab_vaddr = *dyn_tags
         .get(&DT_SYMTAB)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing DT_SYMTAB"))?;
@@ -134,9 +126,6 @@ pub fn parse_x86_64_plt_relocations(
         ));
     }
 
-    let jmprel_off = elf
-        .vaddr_to_offset(jmprel_vaddr)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "DT_JMPREL not in PT_LOAD"))?;
     let symtab_off = elf
         .vaddr_to_offset(symtab_vaddr)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "DT_SYMTAB not in PT_LOAD"))?;
@@ -153,54 +142,115 @@ pub fn parse_x86_64_plt_relocations(
     }
     let strtab = &bytes[strtab_off_usize..];
 
-    let rela_count = (pltrelsz / 24) as usize;
-    let mut out = Vec::with_capacity(rela_count);
+    // Helper: read and demangle the symbol name for a relocation entry.
+    let read_sym_name = |sym_index: u32| -> io::Result<String> {
+        let sym = read_sym(&bytes, symtab_off as usize + (sym_index as usize) * 24)?;
+        let raw = read_cstr(strtab, sym.st_name as usize)
+            .unwrap_or_else(|| format!("<bad-strtab:{}>", sym.st_name));
+        Ok(demangle::demangle(&raw))
+    };
 
-    for i in 0..rela_count {
-        let off = jmprel_off as usize + i * 24;
-        let rela = read_rela(&bytes, off)?;
+    let mut out = Vec::new();
 
-        let r_type = (rela.r_info & 0xffff_ffff) as u32;
-        let sym_index = (rela.r_info >> 32) as u32;
+    // Pass 1: DT_JMPREL / DT_PLTRELSZ — the classic PLT (JUMP_SLOT / IRELATIVE).
+    // These are the lazy-binding slots that --binding and --watch-bindings care
+    // about. A binary may legitimately have no DT_JMPREL (e.g. a Rust dylib
+    // whose imports are all GLOB_DAT), so its absence is not an error.
+    if let (Some(jmprel_vaddr), Some(pltrelsz)) =
+        (dyn_tags.get(&DT_JMPREL).copied(), dyn_tags.get(&DT_PLTRELSZ).copied())
+    {
+        let pltrel = dyn_tags.get(&DT_PLTREL).copied().unwrap_or(0);
+        if pltrel != DT_RELA as u64 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unsupported DT_PLTREL {} (DT_RELA expected)", pltrel),
+            ));
+        }
 
-        let got_runtime_addr = load_bias.map(|b| b.wrapping_add(rela.r_offset));
+        let jmprel_off = elf.vaddr_to_offset(jmprel_vaddr).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "DT_JMPREL not in PT_LOAD")
+        })?;
 
-        // x86_64 relocation types of interest:
-        // - R_X86_64_JUMP_SLOT (7): normal PLT/GOT binding
-        // - R_X86_64_IRELATIVE (37): IFUNC-style resolver; no symbol name
-        let kind = match r_type {
-            7 => {
-                let sym = read_sym(&bytes, symtab_off as usize + (sym_index as usize) * 24)?;
-                let sym_name = read_cstr(strtab, sym.st_name as usize)
-                    .unwrap_or_else(|| format!("<bad-strtab:{}>", sym.st_name));
-                PltRelocationKind::JumpSlot { sym_name }
-            }
-            37 => {
-                let resolver_vaddr = rela._r_addend as u64;
-                let resolver_runtime_addr = load_bias.map(|b| b.wrapping_add(resolver_vaddr));
-                PltRelocationKind::IRelative {
-                    resolver_runtime_addr,
+        let rela_count = (pltrelsz / 24) as usize;
+        out.reserve(rela_count);
+
+        for i in 0..rela_count {
+            let off = jmprel_off as usize + i * 24;
+            let rela = read_rela(&bytes, off)?;
+
+            let r_type = (rela.r_info & 0xffff_ffff) as u32;
+            let sym_index = (rela.r_info >> 32) as u32;
+
+            let got_runtime_addr = load_bias.map(|b| b.wrapping_add(rela.r_offset));
+
+            let kind = match r_type {
+                R_X86_64_JUMP_SLOT => {
+                    PltRelocationKind::JumpSlot { sym_name: read_sym_name(sym_index)? }
                 }
-            }
-            _ => {
-                let sym_name = if sym_index == 0 {
-                    None
-                } else {
-                    let sym = read_sym(&bytes, symtab_off as usize + (sym_index as usize) * 24)?;
-                    Some(
-                        read_cstr(strtab, sym.st_name as usize)
-                            .unwrap_or_else(|| format!("<bad-strtab:{}>", sym.st_name)),
-                    )
-                };
-                PltRelocationKind::Other { sym_name }
-            }
-        };
+                R_X86_64_IRELATIVE => {
+                    let resolver_vaddr = rela._r_addend as u64;
+                    let resolver_runtime_addr = load_bias.map(|b| b.wrapping_add(resolver_vaddr));
+                    PltRelocationKind::IRelative {
+                        resolver_runtime_addr,
+                    }
+                }
+                _ => {
+                    let sym_name = if sym_index == 0 {
+                        None
+                    } else {
+                        Some(read_sym_name(sym_index)?)
+                    };
+                    PltRelocationKind::Other { sym_name }
+                }
+            };
 
-        out.push(PltRelocation {
-            got_runtime_addr,
-            r_type,
-            kind,
-        });
+            out.push(PltRelocation {
+                got_runtime_addr,
+                r_type,
+                kind,
+            });
+        }
+    }
+
+    // Pass 2: DT_RELA / DT_RELASZ — the non-PLT relocation table. Rust emits
+    // cross-dylib function imports here as R_X86_64_GLOB_DAT (type 6) rather
+    // than as JUMP_SLOT, so without this pass the mangled Rust imports are
+    // invisible to --symbols. GLOB_DAT slots are eagerly resolved by the
+    // loader at startup, so they are intentionally excluded from --binding /
+    // --watch-bindings (which track lazy JUMP_SLOT bindings).
+    if let (Some(rela_vaddr), Some(relasz)) =
+        (dyn_tags.get(&DT_RELA).copied(), dyn_tags.get(&DT_RELASZ).copied())
+    {
+        if let Some(rela_off) = elf.vaddr_to_offset(rela_vaddr) {
+            let rela_count = (relasz / 24) as usize;
+            for i in 0..rela_count {
+                let off = rela_off as usize + i * 24;
+                let rela = match read_rela(&bytes, off) {
+                    Ok(r) => r,
+                    // A truncated DT_RELA shouldn't poison the whole report.
+                    Err(_) => break,
+                };
+
+                let r_type = (rela.r_info & 0xffff_ffff) as u32;
+                if r_type != R_X86_64_GLOB_DAT {
+                    continue;
+                }
+                let sym_index = (rela.r_info >> 32) as u32;
+                if sym_index == 0 {
+                    // IRELATIVE-style GLOB_DAT with no symbol — skip; the
+                    // IRELATIVE pass above (or its absence) handles those.
+                    continue;
+                }
+
+                let got_runtime_addr = load_bias.map(|b| b.wrapping_add(rela.r_offset));
+                let sym_name = read_sym_name(sym_index)?;
+                out.push(PltRelocation {
+                    got_runtime_addr,
+                    r_type,
+                    kind: PltRelocationKind::GlobDat { sym_name },
+                });
+            }
+        }
     }
 
     Ok(out)
@@ -221,12 +271,17 @@ pub const DT_NULL: i64 = 0;
 pub const DT_STRTAB: i64 = 5;
 pub const DT_SYMTAB: i64 = 6;
 pub const DT_RELA: i64 = 7;
-// pub const DT_RELASZ: i64 = 8;
+pub const DT_RELASZ: i64 = 8;
 // pub const DT_RELAENT: i64 = 9;
 pub const DT_SYMENT: i64 = 11;
 pub const DT_JMPREL: i64 = 23;
 pub const DT_PLTRELSZ: i64 = 2;
 pub const DT_PLTREL: i64 = 20;
+
+// x86_64 relocation types of interest.
+const R_X86_64_JUMP_SLOT: u32 = 7;
+const R_X86_64_GLOB_DAT: u32 = 6;
+const R_X86_64_IRELATIVE: u32 = 37;
 
 #[derive(Clone, Debug)]
 struct Elf64File {
@@ -534,6 +589,7 @@ fn parse_symtab(bytes: &[u8], sym: &Elf64Shdr, strs: &Elf64Shdr) -> io::Result<V
         ]);
 
         let name = read_cstr(str_bytes, st_name as usize).unwrap_or_else(|| "<noname>".to_string());
+        let name = demangle::demangle(&name);
         out.push(ElfSym {
             name,
             value: st_value,
