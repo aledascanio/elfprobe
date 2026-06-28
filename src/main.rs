@@ -27,13 +27,9 @@ struct Args {
     #[arg(long, default_value_t = false)]
     symbols: bool,
 
-    /// Print rtld link_map
+    /// Print rtld link_map (with --verbose, also each object's DT_NEEDED/DT_RUNPATH/DT_SONAME)
     #[arg(long, default_value_t = false)]
     rtld: bool,
-
-    /// Print per-object DT_NEEDED/DT_RUNPATH/DT_SONAME from the in-memory PT_DYNAMIC section (implies --rtld)
-    #[arg(long, default_value_t = false)]
-    rtld_deps: bool,
 
     /// Print binding summary
     #[arg(long, default_value_t = false)]
@@ -210,8 +206,7 @@ fn main() {
         }
     }
 
-    let rtld_enabled = args.rtld || args.rtld_deps;
-    if rtld_enabled {
+    if args.rtld {
         let aux = match auxv::read_auxv(args.pid) {
             Ok(a) => a,
             Err(e) => {
@@ -253,7 +248,7 @@ fn main() {
                         println!("  [{}] base={} {}", i, theme.address(e.l_addr), name_str);
                     }
 
-                    if args.rtld_deps {
+                    if args.verbose {
                         match rtld::read_dynamic_deps(&mem, e) {
                             Ok(d) => {
                                 if let Some(soname) = d.soname {
