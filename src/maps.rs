@@ -178,6 +178,30 @@ impl MappingGroup {
         }
         is_elf_magic_file(Path::new(&self.key)).unwrap_or(false)
     }
+
+    /// Distinct VMA permission strings in this group, sorted, comma-joined
+    /// (e.g. `r--p,r-xp,rw-p`). The raw per-segment permissions are preserved
+    /// rather than OR-ing them, so a normal DSO's separate `r-x` and `rw-`
+    /// segments are not conflated into a misleading `rwx`.
+    pub fn perm_summary(&self) -> String {
+        let mut set: Vec<&str> = Vec::new();
+        for e in &self.entries {
+            if !set.contains(&e.perms.as_str()) {
+                set.push(e.perms.as_str());
+            }
+        }
+        set.sort_unstable();
+        set.join(",")
+    }
+
+    /// True if any *single* VMA is simultaneously writable and executable
+    /// (a W^X violation). This is distinct from the group merely containing
+    /// separate writable and executable segments.
+    pub fn has_wx(&self) -> bool {
+        self.entries
+            .iter()
+            .any(|e| e.perms.contains('w') && e.perms.contains('x'))
+    }
 }
 
 pub fn group_mappings(entries: &[MapEntry]) -> Vec<MappingGroup> {
@@ -336,5 +360,25 @@ mod tests {
                 .iter()
                 .any(|g| g.key == "/lib/libc.so.6" && g.entries.len() == 2)
         );
+    }
+
+    #[test]
+    fn perm_summary_and_wx() {
+        // A normal DSO with separate r-x and rw- segments must NOT be flagged
+        // as W^X, and its summary keeps the segments distinct.
+        let normal = vec![
+            parse_maps_line("2000-3000 r-xp 00000000 08:01 1 /lib/libc.so.6").unwrap(),
+            parse_maps_line("3000-4000 rw-p 00001000 08:01 1 /lib/libc.so.6").unwrap(),
+            parse_maps_line("4000-5000 r--p 00002000 08:01 1 /lib/libc.so.6").unwrap(),
+        ];
+        let g = &group_mappings(&normal)[0];
+        assert_eq!(g.perm_summary(), "r--p,r-xp,rw-p");
+        assert!(!g.has_wx());
+
+        // A single writable+executable segment is a real W^X violation.
+        let wx = vec![parse_maps_line("1000-2000 rwxp 00000000 00:00 0 ").unwrap()];
+        let g = &group_mappings(&wx)[0];
+        assert!(g.has_wx());
+        assert_eq!(g.perm_summary(), "rwxp");
     }
 }

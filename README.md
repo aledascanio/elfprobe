@@ -106,6 +106,12 @@ Include non-ELF mappings in the output (by default only ELF files are shown):
 elfprobe --pid <PID> --show-non-elf
 ```
 
+Show extra low-level columns/fields (VMA entry counts, hex sizes, `l_ld`, ...):
+
+```bash
+elfprobe --pid <PID> --verbose   # or -v
+```
+
 Dump `rtld` `link_map` (requires `/proc/<PID>/mem`):
 
 ```bash
@@ -146,14 +152,16 @@ elfprobe --help
 ## Output overview
 
 - The initial `exe:` line prints `/proc/<pid>/exe` plus basic ELF header info when readable.
-- Mapping groups are printed as an aligned table with a `KIND ENT SIZE HUMAN PATH` header, e.g.:
-  - `elf          5    0x1eb000    1.9 MiB  /usr/lib/x86_64-linux-gnu/libc.so.6`
+- Mapping groups are printed as an aligned table with a `KIND SIZE PATH` header, e.g.:
+  - `elf          1.9 MiB  /usr/lib/x86_64-linux-gnu/libc.so.6`
+  - With `--verbose` the table gains `ENT` (VMA entry count) and a hex `SIZE` column: `KIND ENT SIZE HUMAN PATH`.
 - With `--symbols`, per-object PLT relocation entries look like:
   - `got=0x... JUMP_SLOT printf`
   - `got=0x... IRELATIVE resolver=0x... name=...`
 - With `--binding`, the summary is an aligned table with a `BASE SLOTS UNRES RES UNK RESOLVED PATH` header and a `TOTAL` footer, where `RESOLVED` is a bar showing the resolved fraction of jump slots, e.g.:
   - `  0x7f...  15  0  15  0  [##########] 100%  /usr/lib/x86_64-linux-gnu/libc.so.6`
-- Sizes are shown both in hex and as human-readable binary units (KiB/MiB/...).
+- Sizes are shown as human-readable binary units (KiB/MiB/...); `--verbose` also shows the raw hex size.
+- The `--rtld` view shows `l_ld` only with `--verbose`.
 - Inline status notes such as `<unavailable>` / `<unknown>` are dimmed when colors are enabled.
 
 ## Troubleshooting

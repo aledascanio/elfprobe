@@ -164,11 +164,11 @@ fn main() {
         if !header_printed {
             let header = if args.verbose {
                 format!(
-                    "{:<9} {:>4} {:>10} {:>10}  {}",
-                    "KIND", "ENT", "SIZE", "HUMAN", "PATH"
+                    "{:<9} {:>4} {:>10} {:>10} {:<14}  {}",
+                    "KIND", "ENT", "SIZE", "HUMAN", "PERMS", "PATH"
                 )
             } else {
-                format!("{:<9} {:>10}  {}", "KIND", "SIZE", "PATH")
+                format!("{:<9} {:>10} {:<14}  {}", "KIND", "SIZE", "PERMS", "PATH")
             };
             println!("{}", theme.dim(&header));
             header_printed = true;
@@ -181,18 +181,33 @@ fn main() {
         } else {
             g.key.clone()
         };
+        // Highlight the permission cell in red when any single segment is
+        // writable+executable (W^X violation); leave it plain otherwise.
+        let perms_padded = format!("{:<14}", g.perm_summary());
+        let perms = if g.has_wx() {
+            theme.wrap(colors::Color::Red, &perms_padded)
+        } else {
+            perms_padded
+        };
         let size = g.total_size();
         if args.verbose {
             println!(
-                "{:<9} {:>4} {:>10} {:>10}  {}",
+                "{:<9} {:>4} {:>10} {:>10} {}  {}",
                 kind,
                 g.entries.len(),
                 format!("0x{:x}", size),
                 maps::human_size(size),
+                perms,
                 key,
             );
         } else {
-            println!("{:<9} {:>10}  {}", kind, maps::human_size(size), key);
+            println!(
+                "{:<9} {:>10} {}  {}",
+                kind,
+                maps::human_size(size),
+                perms,
+                key
+            );
         }
 
         if args.symbols && is_elf {
