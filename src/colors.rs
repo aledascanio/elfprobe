@@ -1,21 +1,35 @@
 use std::io::IsTerminal;
 
+use clap::ValueEnum;
+
+/// When to emit ANSI colors, selected via `--color <auto|always|never>`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum ColorWhen {
+    /// Color only when stdout is a terminal (and `NO_COLOR` is unset).
+    Auto,
+    /// Always color, overriding terminal detection and `NO_COLOR`.
+    Always,
+    /// Never color.
+    Never,
+}
+
 pub struct Theme {
     enabled: bool,
 }
 
 impl Theme {
-    /// Decide whether to emit ANSI colors based on flags and environment:
-    /// - `--no-color` (or the `NO_COLOR` env var) always wins and disables color.
-    /// - `--colors` forces color on.
-    /// - otherwise color is enabled only when stdout is a terminal.
-    pub fn resolve(force_on: bool, force_off: bool) -> Self {
-        let enabled = if force_off || std::env::var_os("NO_COLOR").is_some() {
-            false
-        } else if force_on {
-            true
-        } else {
-            std::io::stdout().is_terminal()
+    /// Decide whether to emit ANSI colors based on `--color <when>` and env:
+    /// - `never` disables color.
+    /// - `always` forces color on, overriding terminal detection and `NO_COLOR`.
+    /// - `auto` enables color only when stdout is a terminal and `NO_COLOR`
+    ///   is unset.
+    pub fn resolve(when: ColorWhen) -> Self {
+        let enabled = match when {
+            ColorWhen::Never => false,
+            ColorWhen::Always => true,
+            ColorWhen::Auto => {
+                std::env::var_os("NO_COLOR").is_none() && std::io::stdout().is_terminal()
+            }
         };
         Self { enabled }
     }

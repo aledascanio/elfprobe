@@ -152,9 +152,10 @@ elfprobe --help
 ## Output overview
 
 - The initial `exe:` line prints `/proc/<pid>/exe` plus basic ELF header info when readable.
-- Mapping groups are printed as an aligned table with a `KIND SIZE PATH` header, e.g.:
-  - `elf          1.9 MiB  /usr/lib/x86_64-linux-gnu/libc.so.6`
-  - With `--verbose` the table gains `ENT` (VMA entry count) and a hex `SIZE` column: `KIND ENT SIZE HUMAN PATH`.
+- Mapping groups are printed as an aligned table with a `KIND SIZE PERMS PATH` header, e.g.:
+  - `elf          1.9 MiB r--p,r-xp,rw-p  /usr/lib/x86_64-linux-gnu/libc.so.6`
+  - With `--verbose` the table gains `ENT` (VMA entry count) and a hex `SIZE` column: `KIND ENT SIZE HUMAN PERMS PATH`.
+- `PERMS` lists the distinct per-segment VMA permissions (not OR-ed together). If any single segment is both writable and executable (a **W^X** violation), the cell is highlighted in red. Such regions (e.g. JIT or RWX anonymous mappings) are most often non-ELF, so pair this with `--show-non-elf`.
 - With `--symbols`, per-object PLT relocation entries look like:
   - `got=0x... JUMP_SLOT printf`
   - `got=0x... IRELATIVE resolver=0x... name=...`

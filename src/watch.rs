@@ -26,12 +26,11 @@ pub fn watch_bindings(
     iterations: Option<u64>,
     filter: Option<String>,
     show_non_elf: bool,
-    colors: bool,
-    no_color: bool,
+    color: colors::ColorWhen,
 ) -> io::Result<()> {
     let mem = MemReader::open(pid)?;
     let mut symbolizer = Symbolizer::new(maps);
-    let theme = colors::Theme::resolve(colors, no_color);
+    let theme = colors::Theme::resolve(color);
 
     let link_map = rtld::read_link_map(pid)?;
 
