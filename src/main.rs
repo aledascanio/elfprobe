@@ -47,6 +47,10 @@ struct Args {
     #[arg(long, default_value_t = false)]
     show_non_elf: bool,
 
+    /// Show extra low-level columns/fields (VMA entry counts, hex sizes, l_ld, ...)
+    #[arg(short, long, default_value_t = false)]
+    verbose: bool,
+
     /// Filter by pathname
     #[arg(long)]
     filter: Option<String>,
@@ -158,13 +162,15 @@ fn main() {
             g.kind == maps::PathnameKind::File && g.likely_elf_dso() && g.elf_magic_ok();
 
         if !header_printed {
-            println!(
-                "{}",
-                theme.dim(&format!(
+            let header = if args.verbose {
+                format!(
                     "{:<9} {:>4} {:>10} {:>10}  {}",
                     "KIND", "ENT", "SIZE", "HUMAN", "PATH"
-                ))
-            );
+                )
+            } else {
+                format!("{:<9} {:>10}  {}", "KIND", "SIZE", "PATH")
+            };
+            println!("{}", theme.dim(&header));
             header_printed = true;
         }
 
@@ -176,14 +182,18 @@ fn main() {
             g.key.clone()
         };
         let size = g.total_size();
-        println!(
-            "{:<9} {:>4} {:>10} {:>10}  {}",
-            kind,
-            g.entries.len(),
-            format!("0x{:x}", size),
-            maps::human_size(size),
-            key,
-        );
+        if args.verbose {
+            println!(
+                "{:<9} {:>4} {:>10} {:>10}  {}",
+                kind,
+                g.entries.len(),
+                format!("0x{:x}", size),
+                maps::human_size(size),
+                key,
+            );
+        } else {
+            println!("{:<9} {:>10}  {}", kind, maps::human_size(size), key);
+        }
 
         if args.symbols && is_elf {
             print_plt_relocations(&g, args.max_symbols, &theme, symbolizer.as_mut());
@@ -221,13 +231,17 @@ fn main() {
                     } else {
                         name.to_string()
                     };
-                    println!(
-                        "  [{}] base={} l_ld={} {}",
-                        i,
-                        theme.address(e.l_addr),
-                        theme.address(e.l_ld),
-                        name_str
-                    );
+                    if args.verbose {
+                        println!(
+                            "  [{}] base={} l_ld={} {}",
+                            i,
+                            theme.address(e.l_addr),
+                            theme.address(e.l_ld),
+                            name_str
+                        );
+                    } else {
+                        println!("  [{}] base={} {}", i, theme.address(e.l_addr), name_str);
+                    }
 
                     if args.rtld_deps {
                         match rtld::read_dynamic_deps(&mem, e) {
