@@ -71,15 +71,23 @@ fn main() {
     match proc::read_exe_info(args.pid) {
         Ok(info) => {
             if let Some(elf) = info.elf {
+                let class = match elf.class {
+                    proc::ElfClass::Elf32 => "ELF32",
+                    proc::ElfClass::Elf64 => "ELF64",
+                };
+                // Default shows the security-relevant PIE label; --verbose also
+                // shows the raw ET_* type.
+                let kind = if args.verbose {
+                    format!("{} [{}]", elf.pie_label(), elf.type_name())
+                } else {
+                    elf.pie_label().to_string()
+                };
                 println!(
                     "exe: {} ({} {:?} {} {})",
                     theme.path(&info.path.display().to_string()),
-                    match elf.class {
-                        proc::ElfClass::Elf32 => "ELF32",
-                        proc::ElfClass::Elf64 => "ELF64",
-                    },
+                    class,
                     elf.endian,
-                    elf.type_name(),
+                    kind,
                     elf.machine_name()
                 );
             } else {

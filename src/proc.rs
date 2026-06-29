@@ -101,6 +101,17 @@ impl ElfInfo {
         }
     }
 
+    /// Security-oriented label for the *main executable*: an `ET_DYN`
+    /// executable is position-independent (PIE), while `ET_EXEC` is not.
+    /// Other ELF types fall back to their raw `ET_*` name.
+    pub fn pie_label(&self) -> &'static str {
+        match self.e_type {
+            2 => "no-PIE", // ET_EXEC
+            3 => "PIE",    // ET_DYN (as a process's /proc/<pid>/exe)
+            _ => self.type_name(),
+        }
+    }
+
     pub fn machine_name(&self) -> &'static str {
         match self.e_machine {
             3 => "x86",
