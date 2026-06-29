@@ -52,6 +52,21 @@ impl Theme {
         self.wrap(Color::Dim, s.as_ref())
     }
 
+    /// Good / safe status (e.g. full RELRO).
+    pub fn good(&self, s: impl AsRef<str>) -> String {
+        self.wrap(Color::Green, s.as_ref())
+    }
+
+    /// Warning / risky status (e.g. partial RELRO).
+    pub fn warn(&self, s: impl AsRef<str>) -> String {
+        self.wrap(Color::Yellow, s.as_ref())
+    }
+
+    /// Bad / unsafe status (e.g. no RELRO).
+    pub fn bad(&self, s: impl AsRef<str>) -> String {
+        self.wrap(Color::Red, s.as_ref())
+    }
+
     pub fn wrap<'a>(&self, c: Color, s: &'a str) -> String {
         if !self.enabled {
             return s.to_string();
@@ -64,6 +79,7 @@ impl Theme {
 pub enum Color {
     Red,
     Yellow,
+    Green,
     Blue,
     Dim,
     Reset,
@@ -74,6 +90,7 @@ impl Color {
         match self {
             Color::Red => "\x1b[31m",
             Color::Yellow => "\x1b[33m",
+            Color::Green => "\x1b[32m",
             Color::Blue => "\x1b[34m",
             Color::Dim => "\x1b[2m",
             Color::Reset => "\x1b[0m",

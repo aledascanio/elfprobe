@@ -4,10 +4,9 @@
 
 Given a PID, it:
 
-- Groups and summarizes `/proc/<pid>/maps` mappings (ELF files only by default).
+- Groups and summarizes `/proc/<pid>/maps` mappings (ELF files only by default), showing each object's **load base address** and **RELRO status**.
 - (Optionally) parses ELF x86_64 PLT relocation entries from mapped DSOs and prints their symbols.
 - (Optionally) reads the dynamic loader (`rtld`) `link_map` via `DT_DEBUG` (requires `/proc/<pid>/mem`).
-- (Optionally) summarizes “resolved vs unresolved” PLT/GOT bindings by inspecting GOT slots at runtime (requires `/proc/<pid>/mem`).
 - (Optionally) polls GOT slots to *watch* first-time PLT bindings happen live (requires `/proc/<pid>/mem`).
 
 
@@ -17,6 +16,11 @@ Given a PID, it:
   - Reads `/proc/<pid>/maps` and groups entries by pathname.
   - Shows mapping group size and number of entries.
   - File mappings that look like loaded ELF DSOs (executable segment, offset-0 mapping, and valid ELF magic on disk) are labeled `elf` instead of `file`.
+  - For ELF objects, prints the **load base address** (the offset-0 mapping start) and the **RELRO status**:
+    - `full` — `PT_GNU_RELRO` present with eager binding (`DT_BIND_NOW` / `DF_BIND_NOW` / `DF_1_NOW`); the GOT is remapped read-only after load. (shown green)
+    - `partial` — `PT_GNU_RELRO` present but lazy binding; the GOT stays writable. (shown yellow)
+    - `none` — no `PT_GNU_RELRO` segment. (shown red)
+  - RELRO is derived from the on-disk ELF headers, so it does **not** require `/proc/<pid>/mem` access.
 
 - **PLT relocation listing (`--symbols`)**
   - For each ELF-looking file mapping, attempts to parse `.rela.plt` / `DT_JMPREL` entries.
@@ -29,14 +33,7 @@ Given a PID, it:
   - Uses `/proc/<pid>/auxv` to find `AT_PHDR` / `AT_PHNUM` and then walks the main executable’s program headers in memory.
   - Finds the `DT_DEBUG` pointer, reads `struct r_debug`, then traverses the `link_map` list.
 
-- **Binding summary (`--binding`)**
-  - For each entry in `link_map`, parses its PLT relocations and reads each GOT slot value.
-  - Classifies a `JUMP_SLOT` relocation as:
-    - `unresolved`: GOT points into that object’s PLT range (typical lazy binding state)
-    - `resolved`: GOT points elsewhere (already bound)
-    - `unknown`: couldn’t determine / couldn’t read
-
-- **Live binding watcher (`--binding --watch`)**
+- **Live binding watcher (`--watch`)**
   - Builds a list of GOT slots for `JUMP_SLOT` relocations and polls them.
   - Prints changes when a slot is updated, optionally symbolizing the new target address.
 
@@ -45,7 +42,7 @@ Given a PID, it:
 - **OS**: Linux (relies on `/proc`).
 - **Permissions**:
   - Reading `/proc/<pid>/maps` often works as the same user.
-  - Reading `/proc/<pid>/mem` is typically restricted (Yama `ptrace_scope`, permissions, capabilities). You may need to run as root, or attach/allow ptrace, depending on your system.
+  - Reading `/proc/<pid>/mem` is typically restricted (Yama `ptrace_scope`, permissions, capabilities). You may need to run as root, or attach/allow ptrace, depending on your system. Only `--rtld` and `--watch` need this; the default mapping report (including RELRO) does not.
 - **Architecture support**:
   - PLT relocation parsing is currently **x86_64-focused** (expects `e_machine = 62` and `DT_PLTREL = DT_RELA`).
   - Basic mapping grouping works for any process, but the deep ELF/rtld features assume a 64-bit process layout.
@@ -125,16 +122,10 @@ Add `--verbose` to also dump each object’s `DT_NEEDED` / `DT_RUNPATH` / `DT_SO
 elfprobe --pid <PID> --rtld --verbose
 ```
 
-Summarize PLT/GOT binding state (requires `/proc/<PID>/mem`):
+Watch GOT slot changes live (polling). `--watch` requires `/proc/<PID>/mem`:
 
 ```bash
-elfprobe --pid <PID> --binding
-```
-
-Watch GOT slot changes live (polling). `--watch` modifies `--binding` and requires it (requires `/proc/<PID>/mem`):
-
-```bash
-elfprobe --pid <PID> --binding --watch --interval-ms 200
+elfprobe --pid <PID> --watch --interval-ms 200
 ```
 
 If you omit `--interval-ms`, the default is `500`. `--interval-ms` and `--iterations` are only valid together with `--watch`.
@@ -142,7 +133,7 @@ If you omit `--interval-ms`, the default is `500`. `--interval-ms` and `--iterat
 Stop after N iterations:
 
 ```bash
-elfprobe --pid <PID> --binding --watch --interval-ms 200 --iterations 100
+elfprobe --pid <PID> --watch --interval-ms 200 --iterations 100
 ```
 
 Show CLI help:
@@ -153,15 +144,14 @@ elfprobe --help
 ## Output overview
 
 - The initial `exe:` line prints `/proc/<pid>/exe` plus basic ELF header info when readable, including a `PIE`/`no-PIE` label (an `ET_DYN` executable is position-independent). `--verbose` also shows the raw `ET_*` type.
-- Mapping groups are printed as an aligned table with a `KIND SIZE PERMS PATH` header, e.g.:
-  - `elf          1.9 MiB r--p,r-xp,rw-p  /usr/lib/x86_64-linux-gnu/libc.so.6`
-  - With `--verbose` the table gains `ENT` (VMA entry count) and a hex `SIZE` column: `KIND ENT SIZE HUMAN PERMS PATH`.
+- Mapping groups are printed as an aligned table with a `KIND BASE SIZE PERMS RELRO PATH` header, e.g.:
+  - `elf       0x7f...  1.9 MiB r--p,r-xp,rw-p  full      /usr/lib/x86_64-linux-gnu/libc.so.6`
+  - With `--verbose` the table gains `ENT` (VMA entry count) and a hex `SIZE` column: `KIND BASE ENT SIZE HUMAN PERMS RELRO PATH`.
+  - `BASE` is the load address (the offset-0 mapping start); `RELRO` is `full` / `partial` / `none` (see above), colored green / yellow / red respectively.
 - `PERMS` lists the distinct per-segment VMA permissions (not OR-ed together). If any single segment is both writable and executable (a **W^X** violation), the cell is highlighted in red. Such regions (e.g. JIT or RWX anonymous mappings) are most often non-ELF, so pair this with `--show-non-elf`.
 - With `--symbols`, per-object PLT relocation entries look like:
   - `got=0x... JUMP_SLOT printf`
   - `got=0x... IRELATIVE resolver=0x... name=...`
-- With `--binding`, the summary is an aligned table with a `BASE SLOTS UNRES RES UNK RESOLVED PATH` header and a `TOTAL` footer, where `RESOLVED` is a bar showing the resolved fraction of jump slots, e.g.:
-  - `  0x7f...  15  0  15  0  [##########] 100%  /usr/lib/x86_64-linux-gnu/libc.so.6`
 - Sizes are shown as human-readable binary units (KiB/MiB/...); `--verbose` also shows the raw hex size.
 - The `--rtld` view shows `l_ld` only with `--verbose`.
 - Inline status notes such as `<unavailable>` / `<unknown>` are dimmed when colors are enabled.
@@ -169,7 +159,7 @@ elfprobe --help
 ## Troubleshooting
 
 - **“failed to read /proc/<pid>/mem” / permission denied**
-  - `--rtld`, `--binding`, and `--binding --watch` require `/proc/<pid>/mem` access.
+  - `--rtld` and `--watch` require `/proc/<pid>/mem` access.
   - On many distros you may need root, or to adjust ptrace restrictions.
 
 - **“unsupported e_machine … (x86_64 expected)”**

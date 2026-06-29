@@ -38,33 +38,58 @@ pub fn read_symbol_tables(path: &Path) -> io::Result<ElfSymbolTables> {
     elf.read_symbol_tables(&bytes)
 }
 
-pub fn read_plt_ranges(path: &Path) -> io::Result<Vec<(u64, u64)>> {
-    let bytes = fs::read(path)?;
-    let elf = Elf64File::parse(&bytes)?;
-    elf.ensure_x86_64()?;
+/// RELRO (Relocation Read-Only) state of an ELF object, derived from its
+/// `PT_GNU_RELRO` segment and bind-now dynamic tags. This is the
+/// security-relevant property of the GOT: with *full* RELRO the GOT is
+/// remapped read-only after early binding and cannot be overwritten at
+/// runtime; with *partial* it stays writable (lazy binding); with *none*
+/// there is no RELRO segment at all.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RelroStatus {
+    None,
+    Partial,
+    Full,
+}
 
-    if elf.shoff == 0 || elf.shnum == 0 {
-        return Ok(Vec::new());
-    }
-
-    let shdrs = elf.read_section_headers(&bytes)?;
-    let Some(shstrtab) = shdrs.get(elf.shstrndx as usize).cloned() else {
-        return Ok(Vec::new());
-    };
-    let shstr_bytes = slice_section(&bytes, &shstrtab)?;
-
-    let mut out = Vec::new();
-    for s in shdrs.iter() {
-        let Some(name) = read_cstr(shstr_bytes, s.sh_name as usize) else {
-            continue;
-        };
-        if name == ".plt" || name == ".plt.sec" || name == ".plt.got" {
-            if s.sh_addr != 0 && s.sh_size != 0 {
-                out.push((s.sh_addr, s.sh_addr.saturating_add(s.sh_size)));
-            }
+impl RelroStatus {
+    pub fn label(self) -> &'static str {
+        match self {
+            RelroStatus::None => "none",
+            RelroStatus::Partial => "partial",
+            RelroStatus::Full => "full",
         }
     }
-    Ok(out)
+}
+
+/// Determine the RELRO state of an ELF64 object by inspecting its program
+/// headers and dynamic section. Reads the file from disk; does not require
+/// `/proc/<pid>/mem`. The ELF machine type is irrelevant for RELRO layout,
+/// so (unlike the PLT relocation parser) this works for any ELF64 object.
+pub fn read_relro_status(path: &Path) -> io::Result<RelroStatus> {
+    let bytes = fs::read(path)?;
+    let elf = Elf64File::parse(&bytes)?;
+
+    let has_relro = elf.phdrs.iter().any(|p| p.p_type == PT_GNU_RELRO);
+    if !has_relro {
+        return Ok(RelroStatus::None);
+    }
+
+    // Full RELRO requires eager binding: `DT_BIND_NOW`, or `DF_BIND_NOW` in
+    // `DT_FLAGS`, or `DF_1_NOW` in `DT_FLAGS_1`. A static executable may have
+    // a RELRO segment but no `PT_DYNAMIC`; in that case `read_dynamic_tags`
+    // fails and we fall back to *partial* (the segment exists, but we can't
+    // confirm bind-now). This is conservative and rare.
+    let bind_now = elf
+        .read_dynamic_tags(&bytes)
+        .ok()
+        .map(|t| {
+            t.get(&DT_BIND_NOW).is_some()
+                || t.get(&DT_FLAGS).is_some_and(|f| f & DF_BIND_NOW != 0)
+                || t.get(&DT_FLAGS_1).is_some_and(|f| f & DF_1_NOW != 0)
+        })
+        .unwrap_or(false);
+
+    Ok(if bind_now { RelroStatus::Full } else { RelroStatus::Partial })
 }
 
 #[derive(Clone, Debug)]
@@ -266,6 +291,8 @@ const ELFDATA2LSB: u8 = 1;
 
 const PT_LOAD: u32 = 1;
 const PT_DYNAMIC: u32 = 2;
+/// Program header marking the RELRO region (GNU extension).
+const PT_GNU_RELRO: u32 = 0x6474e552;
 
 pub const DT_NULL: i64 = 0;
 pub const DT_STRTAB: i64 = 5;
@@ -277,6 +304,16 @@ pub const DT_SYMENT: i64 = 11;
 pub const DT_JMPREL: i64 = 23;
 pub const DT_PLTRELSZ: i64 = 2;
 pub const DT_PLTREL: i64 = 20;
+/// `DT_BIND_NOW`: resolve all relocations at load time (enables full RELRO).
+const DT_BIND_NOW: i64 = 24;
+/// `DT_FLAGS` bitmask.
+const DT_FLAGS: i64 = 30;
+/// `DT_FLAGS_1` bitmask.
+const DT_FLAGS_1: i64 = 0x6fff_fffb;
+/// `DF_BIND_NOW` flag within `DT_FLAGS` (force load-time binding).
+const DF_BIND_NOW: u64 = 0x8;
+/// `DF_1_NOW` flag within `DT_FLAGS_1` (force load-time binding).
+const DF_1_NOW: u64 = 0x1;
 
 // x86_64 relocation types of interest.
 const R_X86_64_JUMP_SLOT: u32 = 7;
@@ -511,7 +548,6 @@ impl Elf64File {
 #[derive(Clone, Debug)]
 struct Elf64Shdr {
     sh_name: u32,
-    sh_addr: u64,
     sh_offset: u64,
     sh_size: u64,
     sh_entsize: u64,
@@ -530,7 +566,6 @@ fn read_phdr(bytes: &[u8], off: usize) -> io::Result<Elf64Phdr> {
 fn read_shdr(bytes: &[u8], off: usize) -> io::Result<Elf64Shdr> {
     Ok(Elf64Shdr {
         sh_name: read_u32_at(bytes, off + 0)?,
-        sh_addr: read_u64_at(bytes, off + 16)?,
         sh_offset: read_u64_at(bytes, off + 24)?,
         sh_size: read_u64_at(bytes, off + 32)?,
         sh_entsize: read_u64_at(bytes, off + 56)?,

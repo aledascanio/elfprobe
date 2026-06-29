@@ -1,7 +1,6 @@
 use clap::Parser;
 
 mod auxv;
-mod binding;
 mod colors;
 mod demangle;
 mod elf64;
@@ -31,10 +30,6 @@ struct Args {
     #[arg(long, default_value_t = false)]
     rtld: bool,
 
-    /// Print binding summary
-    #[arg(long, default_value_t = false)]
-    binding: bool,
-
     /// Include non-ELF mappings in the output
     #[arg(long, default_value_t = false)]
     show_non_elf: bool,
@@ -51,8 +46,8 @@ struct Args {
     #[arg(long)]
     max_symbols: Option<usize>,
 
-    /// Watch GOT slot changes live to observe first-time PLT bindings (modifies --binding; requires /proc/<pid>/mem)
-    #[arg(long, default_value_t = false, requires = "binding")]
+    /// Watch GOT slot changes live to observe first-time PLT bindings (requires /proc/<pid>/mem)
+    #[arg(long, default_value_t = false)]
     watch: bool,
 
     /// Polling interval for --watch, in milliseconds
@@ -161,14 +156,41 @@ fn main() {
         let is_elf =
             g.kind == maps::PathnameKind::File && g.likely_elf_dso() && g.elf_magic_ok();
 
+        // Load base (the offset-0 mapping start) and RELRO state. Both only
+        // apply to real ELF DSOs; for non-ELF groups shown via --show-non-elf
+        // they are left blank.
+        let base_str = match (is_elf, g.load_bias_candidate()) {
+            (true, Some(b)) => theme.wrap(
+                colors::Color::Yellow,
+                &format!("{:>14}", format!("0x{:x}", b)),
+            ),
+            _ => theme.dim(&format!("{:>14}", "-")),
+        };
+        let relro_str = if is_elf {
+            match elf64::read_relro_status(std::path::Path::new(&g.key)) {
+                Ok(elf64::RelroStatus::Full) => {
+                    theme.good(&format!("{:<7}", elf64::RelroStatus::Full.label()))
+                }
+                Ok(elf64::RelroStatus::Partial) => {
+                    theme.warn(&format!("{:<7}", elf64::RelroStatus::Partial.label()))
+                }
+                Ok(elf64::RelroStatus::None) => {
+                    theme.bad(&format!("{:<7}", elf64::RelroStatus::None.label()))
+                }
+                Err(_) => theme.dim(&format!("{:<7}", "-")),
+            }
+        } else {
+            theme.dim(&format!("{:<7}", "-"))
+        };
+
         if !header_printed {
             let header = if args.verbose {
                 format!(
-                    "{:<9} {:>4} {:>10} {:>10} {:<14}  {}",
-                    "KIND", "ENT", "SIZE", "HUMAN", "PERMS", "PATH"
+                    "{:<9} {:>14} {:>4} {:>10} {:>10} {:<14} {:<7}  {}",
+                    "KIND", "BASE", "ENT", "SIZE", "HUMAN", "PERMS", "RELRO", "PATH"
                 )
             } else {
-                format!("{:<9} {:>10} {:<14}  {}", "KIND", "SIZE", "PERMS", "PATH")
+                format!("{:<9} {:>14} {:>10} {:<14} {:<7}  {}", "KIND", "BASE", "SIZE", "PERMS", "RELRO", "PATH")
             };
             println!("{}", theme.dim(&header));
             header_printed = true;
@@ -192,20 +214,24 @@ fn main() {
         let size = g.total_size();
         if args.verbose {
             println!(
-                "{:<9} {:>4} {:>10} {:>10} {}  {}",
+                "{:<9} {} {:>4} {:>10} {:>10} {} {}  {}",
                 kind,
+                base_str,
                 g.entries.len(),
                 format!("0x{:x}", size),
                 maps::human_size(size),
                 perms,
+                relro_str,
                 key,
             );
         } else {
             println!(
-                "{:<9} {:>10} {}  {}",
+                "{:<9} {} {:>10} {} {}  {}",
                 kind,
+                base_str,
                 maps::human_size(size),
                 perms,
+                relro_str,
                 key
             );
         }
@@ -294,96 +320,6 @@ fn main() {
             }
         }
     }
-
-    if args.binding {
-        match binding::summarize_bindings(args.pid) {
-            Ok(summaries) => {
-                println!("binding summary:");
-                let mut header_printed = false;
-                let mut objects = 0usize;
-                let (mut t_slots, mut t_unres, mut t_res, mut t_unk) = (0usize, 0usize, 0usize, 0usize);
-                for s in summaries {
-                    if !maps::should_include(&s.name, args.filter.as_deref(), args.show_non_elf) {
-                        continue;
-                    }
-
-                    if !header_printed {
-                        println!(
-                            "{}",
-                            theme.dim(&format!(
-                                "  {:>14} {:>6} {:>6} {:>6} {:>6}  {:<17}  {}",
-                                "BASE", "SLOTS", "UNRES", "RES", "UNK", "RESOLVED", "PATH"
-                            ))
-                        );
-                        header_printed = true;
-                    }
-
-                    objects += 1;
-                    t_slots += s.jump_slots;
-                    t_unres += s.unresolved;
-                    t_res += s.resolved;
-                    t_unk += s.unknown;
-
-                    let base = theme.wrap(
-                        colors::Color::Yellow,
-                        &format!("{:>14}", format!("0x{:x}", s.base)),
-                    );
-                    println!(
-                        "  {} {:>6} {:>6} {:>6} {:>6}  {}  {}",
-                        base,
-                        s.jump_slots,
-                        s.unresolved,
-                        s.resolved,
-                        s.unknown,
-                        ratio_bar(s.resolved, s.jump_slots, 10),
-                        theme.path(&s.name)
-                    );
-                }
-
-                if header_printed {
-                    println!(
-                        "{}",
-                        theme.dim(&format!(
-                            "  {:>14} {:>6} {:>6} {:>6} {:>6}  {}  {} object(s)",
-                            "TOTAL",
-                            t_slots,
-                            t_unres,
-                            t_res,
-                            t_unk,
-                            ratio_bar(t_res, t_slots, 10),
-                            objects
-                        ))
-                    );
-                }
-            }
-            Err(e) => {
-                eprintln!(
-                    "failed to summarize bindings via /proc/{}/mem: {}",
-                    args.pid, e
-                );
-            }
-        }
-    }
-}
-
-/// Render a fixed-width progress bar of the form `[####------]  80%` showing
-/// `done` out of `total`. The returned string always has the same visible
-/// width for a given `width`, so it can be used as an aligned column.
-fn ratio_bar(done: usize, total: usize, width: usize) -> String {
-    let frac = if total == 0 {
-        0.0
-    } else {
-        (done as f64 / total as f64).clamp(0.0, 1.0)
-    };
-    let filled = (frac * width as f64).round() as usize;
-    let filled = filled.min(width);
-    let pct = (frac * 100.0).round() as u32;
-    format!(
-        "[{}{}] {:>3}%",
-        "#".repeat(filled),
-        "-".repeat(width - filled),
-        pct
-    )
 }
 
 /// Print the PLT relocation entries for an ELF mapping group (the body of
