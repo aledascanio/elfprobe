@@ -51,15 +51,16 @@ struct Args {
     #[arg(long)]
     max_symbols: Option<usize>,
 
-    /// Watch GOT slot changes to observe first-time PLT bindings (requires /proc/<pid>/mem)
-    #[arg(long, default_value_t = false)]
-    watch_bindings: bool,
+    /// Watch GOT slot changes live to observe first-time PLT bindings (modifies --binding; requires /proc/<pid>/mem)
+    #[arg(long, default_value_t = false, requires = "binding")]
+    watch: bool,
 
-    #[arg(long, default_value_t = 500)]
+    /// Polling interval for --watch, in milliseconds
+    #[arg(long, default_value_t = 500, requires = "watch")]
     interval_ms: u64,
 
-    /// Number of polling iterations (omit to run forever)
-    #[arg(long)]
+    /// Number of --watch polling iterations (omit to run forever)
+    #[arg(long, requires = "watch")]
     iterations: Option<u64>,
 }
 
@@ -111,7 +112,7 @@ fn main() {
         }
     };
 
-    if args.watch_bindings {
+    if args.watch {
         if let Err(e) = watch::watch_bindings(
             args.pid,
             entries.clone(),
