@@ -36,7 +36,7 @@ Given a PID, it:
     - `resolved`: GOT points elsewhere (already bound)
     - `unknown`: couldn’t determine / couldn’t read
 
-- **Live binding watcher (`--watch-bindings`)**
+- **Live binding watcher (`--binding --watch`)**
   - Builds a list of GOT slots for `JUMP_SLOT` relocations and polls them.
   - Prints changes when a slot is updated, optionally symbolizing the new target address.
 
@@ -67,14 +67,15 @@ Basic mapping overview:
 elfprobe --pid <PID>
 ```
 
-ANSI colors are enabled automatically when stdout is a terminal. Force them on or off:
+ANSI colors are emitted automatically when stdout is a terminal. Control this with `--color`:
 
 ```bash
-elfprobe --pid <PID> --colors     # force on
-elfprobe --pid <PID> --no-color   # force off
+elfprobe --pid <PID> --color auto     # default: color only on a terminal
+elfprobe --pid <PID> --color always   # force on (overrides NO_COLOR)
+elfprobe --pid <PID> --color never    # force off
 ```
 
-The `NO_COLOR` environment variable (any value) also disables colors.
+In `auto` mode the `NO_COLOR` environment variable (any value) also disables colors.
 
 `--pid` also has a short form:
 
@@ -118,10 +119,10 @@ Dump `rtld` `link_map` (requires `/proc/<PID>/mem`):
 elfprobe --pid <PID> --rtld
 ```
 
-Dump `rtld` `link_map` plus `DT_NEEDED` / `DT_RUNPATH` / `DT_SONAME` from each object’s in-memory `PT_DYNAMIC` (implies `--rtld`) (requires `/proc/<PID>/mem`):
+Add `--verbose` to also dump each object’s `DT_NEEDED` / `DT_RUNPATH` / `DT_SONAME` from its in-memory `PT_DYNAMIC` (and the `l_ld` address):
 
 ```bash
-elfprobe --pid <PID> --rtld-deps
+elfprobe --pid <PID> --rtld --verbose
 ```
 
 Summarize PLT/GOT binding state (requires `/proc/<PID>/mem`):
@@ -130,18 +131,18 @@ Summarize PLT/GOT binding state (requires `/proc/<PID>/mem`):
 elfprobe --pid <PID> --binding
 ```
 
-Watch GOT slot changes (polling) (requires `/proc/<PID>/mem`):
+Watch GOT slot changes live (polling). `--watch` modifies `--binding` and requires it (requires `/proc/<PID>/mem`):
 
 ```bash
-elfprobe --pid <PID> --watch-bindings --interval-ms 200
+elfprobe --pid <PID> --binding --watch --interval-ms 200
 ```
 
-If you omit `--interval-ms`, the default is `500`.
+If you omit `--interval-ms`, the default is `500`. `--interval-ms` and `--iterations` are only valid together with `--watch`.
 
 Stop after N iterations:
 
 ```bash
-elfprobe --pid <PID> --watch-bindings --interval-ms 200 --iterations 100
+elfprobe --pid <PID> --binding --watch --interval-ms 200 --iterations 100
 ```
 
 Show CLI help:
@@ -151,7 +152,7 @@ elfprobe --help
 ```
 ## Output overview
 
-- The initial `exe:` line prints `/proc/<pid>/exe` plus basic ELF header info when readable.
+- The initial `exe:` line prints `/proc/<pid>/exe` plus basic ELF header info when readable, including a `PIE`/`no-PIE` label (an `ET_DYN` executable is position-independent). `--verbose` also shows the raw `ET_*` type.
 - Mapping groups are printed as an aligned table with a `KIND SIZE PERMS PATH` header, e.g.:
   - `elf          1.9 MiB r--p,r-xp,rw-p  /usr/lib/x86_64-linux-gnu/libc.so.6`
   - With `--verbose` the table gains `ENT` (VMA entry count) and a hex `SIZE` column: `KIND ENT SIZE HUMAN PERMS PATH`.
@@ -168,7 +169,7 @@ elfprobe --help
 ## Troubleshooting
 
 - **“failed to read /proc/<pid>/mem” / permission denied**
-  - `--rtld`, `--binding`, and `--watch-bindings` require `/proc/<pid>/mem` access.
+  - `--rtld`, `--binding`, and `--binding --watch` require `/proc/<pid>/mem` access.
   - On many distros you may need root, or to adjust ptrace restrictions.
 
 - **“unsupported e_machine … (x86_64 expected)”**
