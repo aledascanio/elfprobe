@@ -32,6 +32,7 @@ Given a PID, it:
 - **`rtld` link_map dump (`--rtld`)**
   - Uses `/proc/<pid>/auxv` to find `AT_PHDR` / `AT_PHNUM` and then walks the main executable’s program headers in memory.
   - Finds the `DT_DEBUG` pointer, reads `struct r_debug`, then traverses the `link_map` list.
+  - For each object, prints its runtime dependencies from its in-memory `PT_DYNAMIC`: `DT_SONAME`, `DT_NEEDED`, `DT_RUNPATH`, `DT_RPATH`. This is the dependency graph the loader actually resolved, which the mapping table (derived from `/proc/<pid>/maps`) does not show.
 
 - **Live binding watcher (`--watch`)**
   - Builds a list of GOT slots for `JUMP_SLOT` relocations and polls them.
@@ -110,17 +111,13 @@ Show extra low-level columns/fields (VMA entry counts, hex sizes, `l_ld`, ...):
 elfprobe --pid <PID> --verbose   # or -v
 ```
 
-Dump `rtld` `link_map` (requires `/proc/<PID>/mem`):
+Dump `rtld` `link_map` with runtime dependencies (requires `/proc/<PID>/mem`):
 
 ```bash
 elfprobe --pid <PID> --rtld
 ```
 
-Add `--verbose` to also dump each object’s `DT_NEEDED` / `DT_RUNPATH` / `DT_SONAME` from its in-memory `PT_DYNAMIC` (and the `l_ld` address):
-
-```bash
-elfprobe --pid <PID> --rtld --verbose
-```
+This prints each object’s `DT_SONAME` / `DT_NEEDED` / `DT_RUNPATH` / `DT_RPATH`:
 
 Watch GOT slot changes live (polling). `--watch` requires `/proc/<PID>/mem`:
 
@@ -153,7 +150,7 @@ elfprobe --help
   - `got=0x... JUMP_SLOT printf`
   - `got=0x... IRELATIVE resolver=0x... name=...`
 - Sizes are shown as human-readable binary units (KiB/MiB/...); `--verbose` also shows the raw hex size.
-- The `--rtld` view shows `l_ld` only with `--verbose`.
+- The `--rtld` view prints each object’s runtime dependency graph (`soname` / `needed` / `runpath` / `rpath`) by default.
 - Inline status notes such as `<unavailable>` / `<unknown>` are dimmed when colors are enabled.
 
 ## Troubleshooting

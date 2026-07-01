@@ -26,7 +26,7 @@ struct Args {
     #[arg(long, default_value_t = false)]
     symbols: bool,
 
-    /// Print rtld link_map (with --verbose, also each object's DT_NEEDED/DT_RUNPATH/DT_SONAME)
+    /// Print rtld link_map with each object's runtime dependencies (soname/needed/runpath/rpath)
     #[arg(long, default_value_t = false)]
     rtld: bool,
 
@@ -34,7 +34,7 @@ struct Args {
     #[arg(long, default_value_t = false)]
     show_non_elf: bool,
 
-    /// Show extra low-level columns/fields (VMA entry counts, hex sizes, l_ld, ...)
+    /// Show extra low-level columns/fields (VMA entry counts, hex sizes, ET_* type, ...)
     #[arg(short, long, default_value_t = false)]
     verbose: bool,
 
@@ -271,43 +271,35 @@ fn main() {
                     } else {
                         name.to_string()
                     };
-                    if args.verbose {
-                        println!(
-                            "  [{}] base={} l_ld={} {}",
-                            i,
-                            theme.address(e.l_addr),
-                            theme.address(e.l_ld),
-                            name_str
-                        );
-                    } else {
-                        println!("  [{}] base={} {}", i, theme.address(e.l_addr), name_str);
-                    }
+                    println!("  [{}] base={} {}", i, theme.address(e.l_addr), name_str);
 
-                    if args.verbose {
-                        match rtld::read_dynamic_deps(&mem, e) {
-                            Ok(d) => {
-                                if let Some(soname) = d.soname {
-                                    println!("      soname: {}", theme.symbol(&soname));
-                                }
-                                if let Some(runpath) = d.runpath {
-                                    println!("      runpath: {}", runpath);
-                                }
-                                if let Some(rpath) = d.rpath {
-                                    println!("      rpath: {}", rpath);
-                                }
-                                if !d.needed.is_empty() {
-                                    println!("      needed:");
-                                    for n in d.needed {
-                                        println!("        - {}", theme.symbol(&n));
-                                    }
+                    // The runtime dependency graph (soname / needed /
+                    // runpath / rpath) is the genuinely useful, non-overlapping
+                    // data that `--rtld` adds over the mapping table. Print it
+                    // by default.
+                    match rtld::read_dynamic_deps(&mem, e) {
+                        Ok(d) => {
+                            if let Some(soname) = d.soname {
+                                println!("      soname: {}", theme.symbol(&soname));
+                            }
+                            if let Some(runpath) = d.runpath {
+                                println!("      runpath: {}", runpath);
+                            }
+                            if let Some(rpath) = d.rpath {
+                                println!("      rpath: {}", rpath);
+                            }
+                            if !d.needed.is_empty() {
+                                println!("      needed:");
+                                for n in d.needed {
+                                    println!("        - {}", theme.symbol(&n));
                                 }
                             }
-                            Err(err) => {
-                                println!(
-                                    "      dynamic: {}",
-                                    theme.dim(&format!("<unavailable> ({})", err))
-                                );
-                            }
+                        }
+                        Err(err) => {
+                            println!(
+                                "      dynamic: {}",
+                                theme.dim(&format!("<unavailable> ({})", err))
+                            );
                         }
                     }
                 }
