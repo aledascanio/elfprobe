@@ -139,22 +139,20 @@ fn main() {
     );
     let mut header_printed = false;
     for g in groups {
-        if !args.show_non_elf {
-            // `elf_magic_ok()` touches the mapped file on disk.
-            // On large processes this can be very expensive if done for every file-backed mapping.
-            // Prefilter using in-memory heuristics so we only probe mappings that look like real DSOs.
-            if !(g.kind == maps::PathnameKind::File && g.likely_elf_dso() && g.elf_magic_ok()) {
-                continue;
-            }
+        // `elf_magic_ok()` touches the mapped file on disk (a 4-byte read).
+        // On large processes this can be expensive if done for every
+        // file-backed mapping, so prefilter with the in-memory heuristics
+        // first (`likely_elf_dso`) and compute the flag once per group.
+        let is_elf =
+            g.kind == maps::PathnameKind::File && g.likely_elf_dso() && g.elf_magic_ok();
+        if !args.show_non_elf && !is_elf {
+            continue;
         }
         if let Some(ref needle) = args.filter {
             if !g.key.contains(needle) {
                 continue;
             }
         }
-
-        let is_elf =
-            g.kind == maps::PathnameKind::File && g.likely_elf_dso() && g.elf_magic_ok();
 
         // Load base (the offset-0 mapping start) and RELRO state. Both only
         // apply to real ELF DSOs; for non-ELF groups shown via --show-non-elf

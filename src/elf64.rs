@@ -1,6 +1,7 @@
 use std::collections::HashMap;
-use std::fs;
+use std::fs::{self, File};
 use std::io;
+use std::os::unix::fs::FileExt;
 use std::path::Path;
 
 use crate::demangle;
@@ -61,13 +62,109 @@ impl RelroStatus {
     }
 }
 
+/// Header-level view of an ELF64 file: the ELF header, the program header
+/// table, and the `PT_DYNAMIC` contents — the small regions needed to answer
+/// questions like "is this object full RELRO?" or "what is its load bias?".
+///
+/// Only these regions are read from disk. The previous implementation read
+/// the *whole* file (`fs::read`) just to inspect a few KiB of headers, so a
+/// default run on a large process (e.g. Firefox's 186 MiB libxul) transferred
+/// hundreds of MiB, allocated a transient copy of the biggest DSO, and failed
+/// outright under memory limits — silently blanking the RELRO column.
+pub struct Elf64HeaderView {
+    pub phdrs: Vec<Elf64Phdr>,
+    /// Raw `PT_DYNAMIC` contents (Elf64_Dyn entries), if the object has one.
+    dyn_bytes: Option<Vec<u8>>,
+}
+
+/// Cap on the bytes read for the dynamic section. It is a few KiB in
+/// practice; the cap only stops a malformed `p_filesz` from triggering a
+/// huge allocation.
+const DYN_MAX_BYTES: u64 = 1 << 20;
+
+impl Elf64HeaderView {
+    pub fn read(path: &Path) -> io::Result<Self> {
+        let file = File::open(path)?;
+
+        let mut ehdr = [0u8; 0x40];
+        file.read_exact_at(&mut ehdr, 0)?;
+        if !is_elf_magic(&ehdr) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "missing ELF magic",
+            ));
+        }
+        if ehdr[EI_CLASS] != ELFCLASS64 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "not ELF64"));
+        }
+        if ehdr[EI_DATA] != ELFDATA2LSB {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "only little-endian supported",
+            ));
+        }
+
+        let phoff = read_u64_at(&ehdr, 0x20)?;
+        let phentsize = read_u16_at(&ehdr, 0x36)?;
+        let phnum = read_u16_at(&ehdr, 0x38)?;
+        if phentsize as usize != 56 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unexpected e_phentsize {}", phentsize),
+            ));
+        }
+
+        let mut phdr_bytes = vec![0u8; phnum as usize * 56];
+        file.read_exact_at(&mut phdr_bytes, phoff)?;
+
+        let mut phdrs = Vec::with_capacity(phnum as usize);
+        for i in 0..phnum as usize {
+            phdrs.push(read_phdr(&phdr_bytes, i * 56)?);
+        }
+
+        let dyn_bytes = match phdrs.iter().find(|p| p.p_type == PT_DYNAMIC) {
+            Some(d) if d.p_filesz > 0 => {
+                let len = d.p_filesz.min(DYN_MAX_BYTES) as usize;
+                let mut buf = vec![0u8; len];
+                file.read_exact_at(&mut buf, d.p_offset)?;
+                Some(buf)
+            }
+            _ => None,
+        };
+
+        Ok(Self { phdrs, dyn_bytes })
+    }
+
+    /// Parse the dynamic tags from the `PT_DYNAMIC` region captured at
+    /// construction. Errors if the object has no dynamic section (the same
+    /// contract as the whole-file `Elf64File::read_dynamic_tags`).
+    pub fn dynamic_tags(&self) -> io::Result<HashMap<i64, u64>> {
+        let bytes = self
+            .dyn_bytes
+            .as_deref()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing PT_DYNAMIC"))?;
+
+        let mut tags = HashMap::new();
+        for i in 0..(bytes.len() / 16) {
+            let off = i * 16;
+            let d_tag = read_i64_at(bytes, off)?;
+            if d_tag == DT_NULL {
+                break;
+            }
+            let d_val = read_u64_at(bytes, off + 8)?;
+            // Keep first occurrence, as the whole-file parser does.
+            tags.entry(d_tag).or_insert(d_val);
+        }
+        Ok(tags)
+    }
+}
+
 /// Determine the RELRO state of an ELF64 object by inspecting its program
 /// headers and dynamic section. Reads the file from disk; does not require
 /// `/proc/<pid>/mem`. The ELF machine type is irrelevant for RELRO layout,
 /// so (unlike the PLT relocation parser) this works for any ELF64 object.
 pub fn read_relro_status(path: &Path) -> io::Result<RelroStatus> {
-    let bytes = fs::read(path)?;
-    let elf = Elf64File::parse(&bytes)?;
+    let elf = Elf64HeaderView::read(path)?;
 
     let has_relro = elf.phdrs.iter().any(|p| p.p_type == PT_GNU_RELRO);
     if !has_relro {
@@ -80,7 +177,7 @@ pub fn read_relro_status(path: &Path) -> io::Result<RelroStatus> {
     // fails and we fall back to *partial* (the segment exists, but we can't
     // confirm bind-now). This is conservative and rare.
     let bind_now = elf
-        .read_dynamic_tags(&bytes)
+        .dynamic_tags()
         .ok()
         .map(|t| {
             t.get(&DT_BIND_NOW).is_some()
@@ -109,8 +206,7 @@ pub fn compute_load_bias_from_mapping(
     map_start: u64,
     map_offset: u64,
 ) -> io::Result<u64> {
-    let bytes = fs::read(path)?;
-    let elf = Elf64File::parse(&bytes)?;
+    let elf = Elf64HeaderView::read(path)?;
 
     let Some(seg) = elf
         .phdrs
@@ -723,4 +819,124 @@ fn read_u64_at(bytes: &[u8], off: usize) -> io::Result<u64> {
 
 fn read_i64_at(bytes: &[u8], off: usize) -> io::Result<i64> {
     Ok(read_u64_at(bytes, off)? as i64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a minimal ELF64 image in memory: ELF header (64 B), program
+    /// headers (56 B each), then the dynamic entries at the end. `phdrs` are
+    /// `(p_type, p_flags)` pairs; the `PT_DYNAMIC` entry is wired to the
+    /// trailing dynamic region automatically.
+    fn build_minimal_elf64(phdrs: &[(u32, u32)], dyn_entries: &[(i64, u64)]) -> Vec<u8> {
+        let ehdr_len = 0x40usize;
+        let phdr_len = phdrs.len() * 56;
+        let dyn_off = (ehdr_len + phdr_len) as u64;
+        let dyn_len = dyn_entries.len() * 16;
+
+        let mut out = vec![0u8; ehdr_len + phdr_len + dyn_len];
+        out[0..4].copy_from_slice(&[0x7f, b'E', b'L', b'F']);
+        out[EI_CLASS] = ELFCLASS64;
+        out[EI_DATA] = ELFDATA2LSB;
+        // e_phoff
+        out[0x20..0x28].copy_from_slice(&(ehdr_len as u64).to_le_bytes());
+        // e_phentsize, e_phnum
+        out[0x36..0x38].copy_from_slice(&56u16.to_le_bytes());
+        out[0x38..0x3a].copy_from_slice(&(phdrs.len() as u16).to_le_bytes());
+
+        for (i, (p_type, p_flags)) in phdrs.iter().enumerate() {
+            let off = ehdr_len + i * 56;
+            out[off..off + 4].copy_from_slice(&p_type.to_le_bytes());
+            out[off + 4..off + 8].copy_from_slice(&p_flags.to_le_bytes());
+            if *p_type == PT_DYNAMIC {
+                out[off + 8..off + 16].copy_from_slice(&dyn_off.to_le_bytes()); // p_offset
+                out[off + 32..off + 40].copy_from_slice(&(dyn_len as u64).to_le_bytes()); // p_filesz
+            }
+        }
+
+        for (i, (tag, val)) in dyn_entries.iter().enumerate() {
+            let off = ehdr_len + phdr_len + i * 16;
+            out[off..off + 8].copy_from_slice(&tag.to_le_bytes());
+            out[off + 8..off + 16].copy_from_slice(&val.to_le_bytes());
+        }
+
+        out
+    }
+
+    /// Write `bytes` to a uniquely-named temp file and return its path.
+    fn write_temp_elf(bytes: &[u8], tag: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "elfprobe-test-{}-{}.so",
+            std::process::id(),
+            tag
+        ));
+        fs::write(&path, bytes).expect("failed to write temp ELF");
+        path
+    }
+
+    #[test]
+    fn relro_full_with_dt_bind_now() {
+        let phdrs = [(PT_DYNAMIC, 6), (PT_GNU_RELRO, 4)];
+        let dyn_entries = [(DT_BIND_NOW, 0)];
+        let path = write_temp_elf(&build_minimal_elf64(&phdrs, &dyn_entries), "relro-full");
+        assert_eq!(read_relro_status(&path).unwrap(), RelroStatus::Full);
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn relro_partial_without_bind_now() {
+        // PT_DYNAMIC present but no bind-now tag of any kind.
+        let phdrs = [(PT_DYNAMIC, 6), (PT_GNU_RELRO, 4)];
+        let dyn_entries = [(DT_FLAGS, 0)];
+        let path = write_temp_elf(&build_minimal_elf64(&phdrs, &dyn_entries), "relro-partial");
+        assert_eq!(read_relro_status(&path).unwrap(), RelroStatus::Partial);
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn relro_none_without_gnu_relro_segment() {
+        let phdrs = [(PT_DYNAMIC, 6)];
+        let dyn_entries = [(DT_BIND_NOW, 0)];
+        let path = write_temp_elf(&build_minimal_elf64(&phdrs, &dyn_entries), "relro-none");
+        assert_eq!(read_relro_status(&path).unwrap(), RelroStatus::None);
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn relro_full_via_dt_flags_df_bind_now() {
+        // DF_BIND_NOW (0x8) set in DT_FLAGS is equivalent to DT_BIND_NOW.
+        let phdrs = [(PT_DYNAMIC, 6), (PT_GNU_RELRO, 4)];
+        let dyn_entries = [(DT_FLAGS, DF_BIND_NOW)];
+        let path = write_temp_elf(&build_minimal_elf64(&phdrs, &dyn_entries), "relro-flags");
+        assert_eq!(read_relro_status(&path).unwrap(), RelroStatus::Full);
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn load_bias_from_first_load_segment() {
+        // One PT_LOAD with p_offset == 0 and p_vaddr == 0x1000; mapping that
+        // segment at 0x7f00_0000_0000 yields bias = map_start - 0x1000.
+        const PT_LOAD: u32 = 1;
+        let phdrs = [(PT_LOAD, 5), (PT_GNU_RELRO, 4)];
+        let bytes = build_minimal_elf64(&phdrs, &[]);
+        let mut bytes = bytes;
+        // Patch the PT_LOAD's p_vaddr (at +16 within its phdr) to 0x1000.
+        let ehdr_len = 0x40usize;
+        bytes[ehdr_len + 16..ehdr_len + 24].copy_from_slice(&0x1000u64.to_le_bytes());
+
+        let path = write_temp_elf(&bytes, "load-bias");
+        let map_start = 0x7f000000_0000u64;
+        let bias = compute_load_bias_from_mapping(&path, map_start, 0).unwrap();
+        assert_eq!(bias, map_start - 0x1000);
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn header_view_rejects_non_elf() {
+        let path = write_temp_elf(b"not an elf file at all", "not-elf");
+        assert!(Elf64HeaderView::read(&path).is_err());
+        assert!(read_relro_status(&path).is_err());
+        fs::remove_file(&path).ok();
+    }
 }
