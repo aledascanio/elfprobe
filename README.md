@@ -36,6 +36,7 @@ Given a PID, it:
 
 - **Live binding watcher (`--watch`)**
   - Builds a list of GOT slots for `JUMP_SLOT` relocations and polls them.
+  - Objects are taken from the loader's `link_map`; the main executable (whose `l_name` is empty there) is resolved via `/proc/<pid>/exe`, so its GOT slots are watched as well.
   - Prints changes when a slot is updated, optionally symbolizing the new target address.
 
 ## Requirements / Notes

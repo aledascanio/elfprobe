@@ -37,13 +37,19 @@ pub fn watch_bindings(
     let mut slots = Vec::new();
 
     for e in link_map {
+        // The main executable has an empty `l_name` in the link_map; fall
+        // back to /proc/<pid>/exe so its GOT slots are watched too. Non-path
+        // entries (e.g. linux-vdso) have an `l_name` but no backing file, and
+        // are dropped by the relocation parse below (or by --show-non-elf
+        // filtering).
         let path = if e.l_name.is_empty() {
-            None
+            match crate::proc::read_proc_exe(pid) {
+                Ok(p) => p.to_string_lossy().into_owned(),
+                // Exe link unreadable (process gone): nothing to watch.
+                Err(_) => continue,
+            }
         } else {
-            Some(e.l_name)
-        };
-        let Some(path) = path else {
-            continue;
+            e.l_name.clone()
         };
 
         if !maps::should_include(&path, filter.as_deref(), show_non_elf) {
